@@ -11,6 +11,7 @@ import (
 	topolvmlegacyv1 "github.com/topolvm/topolvm/api/legacy/v1"
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
 	clientwrapper "github.com/topolvm/topolvm/internal/client"
+	"github.com/topolvm/topolvm/internal/controller"
 	"github.com/topolvm/topolvm/internal/getter"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -60,7 +61,7 @@ func newRetryMissingGetter(cacheReader client.Reader, apiReader client.Reader) *
 	}
 }
 
-func (r *retryMissingGetter) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
+func (r *retryMissingGetter) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	var lv *topolvmv1.LogicalVolume
 	var ok bool
 	if lv, ok = obj.(*topolvmv1.LogicalVolume); !ok {
@@ -235,7 +236,8 @@ func (s *LogicalVolumeService) DeleteVolume(ctx context.Context, volumeID string
 }
 
 // CreateSnapshot creates a snapshot of existing volume.
-func (s *LogicalVolumeService) CreateSnapshot(ctx context.Context, node, dc, sourceVol, sname, accessType string, snapSize resource.Quantity) (*topolvmv1.LogicalVolume, error) {
+func (s *LogicalVolumeService) CreateSnapshot(ctx context.Context, node, dc, sourceVol, sname,
+	accessType string, snapSize resource.Quantity) (*topolvmv1.LogicalVolume, bool, error) {
 	logger.Info("CreateSnapshot called", "name", sname)
 	snapshotLV := &topolvmv1.LogicalVolume{
 		ObjectMeta: metav1.ObjectMeta{
@@ -251,7 +253,26 @@ func (s *LogicalVolumeService) CreateSnapshot(ctx context.Context, node, dc, sou
 		},
 	}
 
-	return s.createAndWait(ctx, snapshotLV)
+	newLV, err := s.createAndWait(ctx, snapshotLV)
+	if err != nil {
+		return nil, false, err
+	}
+
+	enable, err := controller.IsOnlineSnapshotEnabled(ctx, s.getter, newLV)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to check if online snapshot is enabled: %w", err)
+	}
+	if enable {
+		if newLV.Status.Snapshot != nil && newLV.Status.Snapshot.Phase == topolvmv1.OperationPhaseSucceeded {
+			logger.Info("LogicalVolume snapshot successfully created with online mode", "volume_id", newLV.Status.VolumeID)
+			return newLV, true, nil
+		}
+		logger.Info("LogicalVolume snapshot is in progress with online mode", "volume_id", newLV.Status.VolumeID)
+		return newLV, false, nil
+	}
+
+	return newLV, true, nil
+
 }
 
 // ExpandVolume expands volume

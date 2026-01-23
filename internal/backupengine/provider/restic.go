@@ -57,15 +57,15 @@ func (r *resticProvider) Backup(ctx context.Context, param *BackupParam) (*Backu
 		}, err
 	}
 
-	err := r.wrapper.EnsureNoExclusiveLock(param.Client, param.Namespace)
-	if err != nil {
-		return fail(err, "failed to ensure to no exclusive lock: %v")
-	}
 	if exist := r.wrapper.RepositoryAlreadyExist(param.Repo.Name); !exist {
 		err := r.wrapper.InitializeRepository(param.Repo.Name)
 		if err != nil {
 			return fail(err, "failed to initialize repository: %v")
 		}
+	}
+	err := r.wrapper.EnsureNoExclusiveLock(param.Client, param.Namespace)
+	if err != nil {
+		return fail(err, "failed to ensure to no exclusive lock: %v")
 	}
 
 	backupOptions := restic.BackupOptions{

@@ -375,7 +375,7 @@ func (s controllerServerNoLocked) CreateSnapshot(ctx context.Context, req *csi.C
 	deviceClass := sourceVol.Spec.DeviceClass
 	sourceVolName := sourceVol.Spec.Name
 	currentSize := sourceVol.Status.CurrentSize
-	snapshot, err := s.lvService.CreateSnapshot(ctx, node, deviceClass, sourceVolName, name, accessType, *currentSize)
+	snapshot, readToUse, err := s.lvService.CreateSnapshot(ctx, node, deviceClass, sourceVolName, name, accessType, *currentSize)
 	if err != nil {
 		_, ok := status.FromError(err)
 		if !ok {
@@ -383,14 +383,13 @@ func (s controllerServerNoLocked) CreateSnapshot(ctx context.Context, req *csi.C
 		}
 		return nil, err
 	}
-
 	return &csi.CreateSnapshotResponse{
 		Snapshot: &csi.Snapshot{
 			SizeBytes:      snapshot.Status.CurrentSize.Value(),
 			SnapshotId:     snapshot.Status.VolumeID,
 			SourceVolumeId: sourceVolID,
 			CreationTime:   snapTimeStamp,
-			ReadyToUse:     true,
+			ReadyToUse:     readToUse,
 		},
 	}, nil
 }
