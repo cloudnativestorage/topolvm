@@ -22,7 +22,7 @@ type DeleteOptions struct {
 
 	// Logical volume details
 	lvName     string
-	repository string
+	repoPath   string
 	logicalVol *topolvmv1.LogicalVolume
 
 	//timeout            time.Duration
@@ -63,8 +63,8 @@ func parseDeleteFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&kubeconfigPath, "kubeconfig", kubeconfigPath,
 		"Path to kubeconfig file with authorization information")
 
-	cmd.Flags().StringVar(&dOpt.repository, "repository",
-		"", "Repository URL (required)")
+	cmd.Flags().StringVar(&dOpt.repoPath, "repo-path",
+		"", "Path of the repoPath where the snapshot is stored")
 	cmd.Flags().StringVar(&dOpt.lvName, "lv-name",
 		"", "Name of the logical volume to backup (required)")
 	cmd.Flags().StringVar(&dOpt.snapshotStorageRef.Namespace, "snapshot-storage-namespace",
@@ -85,47 +85,41 @@ func (opt *DeleteOptions) execute(ctx context.Context) error {
 
 func (opt *DeleteOptions) performDelete(ctx context.Context) error {
 	opt.log.Info("Starting delete operation", "lvName", opt.lvName)
-	pvider, err := opt.getDeleteProvider()
-	if err != nil {
-		opt.handleDeleteError(ctx, "failed to initialize delete provider", err)
-		return err
-	}
 
-	if err = opt.executeDelete(ctx, pvider); err != nil {
+	if err := opt.executeDelete(ctx); err != nil {
 		opt.handleDeleteError(ctx, "delete execution failed", err)
 		return err
 	}
-	if err = opt.setDeleteConditionToSuccess(ctx); err != nil {
+	if err := opt.setDeleteConditionToSuccess(ctx); err != nil {
 		return fmt.Errorf("failed to set delete condition to success: %w", err)
 	}
 	return nil
 }
 
-func (opt *DeleteOptions) executeDelete(ctx context.Context, pvider provider.Provider) error {
-	param := opt.buildDeleteParams()
-	_, err := pvider.Delete(ctx, param)
+func (opt *DeleteOptions) executeDelete(ctx context.Context) error {
+	params := opt.buildDeleteParams()
+	pvider, err := getProvider(opt.client, opt.log,
+		opt.snapshotStorage, params.Repo)
+	if err != nil {
+		return fmt.Errorf("failed to initialize delete provider: %w", err)
+	}
+	_, err = pvider.Delete(ctx, params)
 	if err != nil {
 		return fmt.Errorf("delete operation failed: %w", err)
 	}
 	return nil
 }
 
-func (opt *DeleteOptions) buildDeleteParams() provider.DeleteParam {
-	return provider.DeleteParam{
-		RepoRef: provider.RepoRef{
-			Repository: &opt.repository,
+func (opt *DeleteOptions) buildDeleteParams() *provider.DeleteParam {
+	return &provider.DeleteParam{
+		Client:    opt.client,
+		Namespace: getNamespace(),
+		Repo: &provider.RepoInf{
+			Name: opt.repoPath,
+			Path: opt.repoPath,
 		},
 		SnapshotIDs: []string{opt.logicalVol.Status.Snapshot.SnapshotID},
 	}
-}
-
-func (opt *DeleteOptions) getDeleteProvider() (provider.Provider, error) {
-	pvider, err := provider.GetProvider(opt.client, opt.snapshotStorage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get snapshot provider: %w", err)
-	}
-	opt.log.Info("delete provider initialized", "engine", opt.snapshotStorage.Spec.Engine)
-	return pvider, nil
 }
 
 func (opt *DeleteOptions) handleDeleteError(ctx context.Context, message string, err error) {

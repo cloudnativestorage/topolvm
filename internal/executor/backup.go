@@ -215,7 +215,7 @@ func (e *SnapshotExecutor) buildSnapshotContainer(templateContainer *corev1.Cont
 			BackupCommandName, // "backup" subcommand
 		},
 		Args:            e.buildSnapshotArgs(),
-		Env:             e.buildSnapshotEnv(templateContainer),
+		Env:             e.buildSnapshotEnv(),
 		VolumeMounts:    volumeMounts,
 		SecurityContext: e.buildSecurityContext(),
 		Resources:       e.buildResourceRequirements(),
@@ -244,8 +244,9 @@ func (e *SnapshotExecutor) buildSnapshotArgs() []string {
 }
 
 // buildSnapshotEnv constructs the environment variables for the snapshot container.
-func (e *SnapshotExecutor) buildSnapshotEnv(templateContainer *corev1.Container) []corev1.EnvVar {
+func (e *SnapshotExecutor) buildSnapshotEnv() []corev1.EnvVar {
 	var env []corev1.EnvVar
+	env = append(env, corev1.EnvVar{Name: EnvHostNamespace, Value: getNamespace()})
 	return env
 }
 

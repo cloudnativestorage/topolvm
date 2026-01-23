@@ -3,20 +3,25 @@ package provider
 import (
 	"context"
 	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// RepoRef includes the parameters to manipulate a backup repository
-type RepoRef struct {
-	Repository *string // Only use when redefining the repository
+// RepoInf includes the parameters to manipulate a backup repository
+type RepoInf struct {
+	Hostname   string // Hostname of the backup/restore repository
+	Name       string // Just a name of the repository for mapping purpose
+	Repository string // Thr URL of the backup/restore repository
 
-	FullPath string // It only uses to set the backup/restore result
-	Suffix   string // It'll add as a suffix e.g, bucket/prefix/repositorySuffix
-	Hostname string
+	Path string // It'll add after the bucket/prefix/ e.g, bucket/prefix/path
+	//FullPath  string // It only uses to set the backup/restore result
 }
 
 // BackupParam includes parameters for backup operations
 type BackupParam struct {
-	RepoRef
+	Repo        *RepoInf
+	Client      client.Client
+	Namespace   string
 	BackupPaths []string
 	Exclude     []string
 	Args        []string
@@ -24,7 +29,7 @@ type BackupParam struct {
 
 // RestoreParam includes parameters for restore operations
 type RestoreParam struct {
-	RepoRef
+	Repo         *RepoInf
 	SnapshotID   string
 	RestorePaths []string
 	Destination  string
@@ -35,7 +40,10 @@ type RestoreParam struct {
 
 // DeleteParam includes parameters for delete operations
 type DeleteParam struct {
-	RepoRef
+	Client client.Client
+	Repo   *RepoInf
+
+	Namespace   string
 	SnapshotIDs []string
 }
 
@@ -62,7 +70,10 @@ type BackupResult struct {
 	// SnapshotID is the unique identifier of the created snapshot
 	SnapshotID string `json:"snapshotID"`
 
-	// Repository is the backup repository URL/path
+	//Path represents the directory inside the SnapshotStorage where the data was stored
+	Path string `json:"path"`
+
+	// Repository is the backup repository name
 	Repository string `json:"repository,omitempty"`
 
 	// BackupTime is when the backup was taken
@@ -174,10 +185,10 @@ type Provider interface {
 	ValidateConnection(ctx context.Context) error
 
 	// Backup creates a new snapshot and returns detailed backup result
-	Backup(ctx context.Context, param BackupParam) (*BackupResult, error)
+	Backup(ctx context.Context, param *BackupParam) (*BackupResult, error)
 
 	// Restore restores files from a snapshot
-	Restore(ctx context.Context, param RestoreParam) (*RestoreResult, error)
+	Restore(ctx context.Context, param *RestoreParam) (*RestoreResult, error)
 
-	Delete(ctx context.Context, param DeleteParam) ([]byte, error)
+	Delete(ctx context.Context, param *DeleteParam) ([]byte, error)
 }

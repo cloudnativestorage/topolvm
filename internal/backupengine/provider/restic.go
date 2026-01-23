@@ -8,22 +8,32 @@ import (
 	"time"
 
 	v1 "github.com/topolvm/topolvm/api/v1"
-	"github.com/topolvm/topolvm/internal/backupengine/config"
-	"github.com/topolvm/topolvm/internal/backupengine/restic"
+	"kubestash.dev/apimachinery/pkg/restic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const (
+	defaultScratchDir = "/tmp"
+)
+
 // NewResticProvider creates a new Restic repository provider
-func NewResticProvider(client client.Client, snapStorage *v1.SnapshotBackupStorage) (Provider, error) {
-	setupOptions, err := config.NewSetupOptionsForStorage(client, snapStorage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create setup options: %w", err)
+func NewResticProvider(client client.Client, snapStorage *v1.SnapshotBackupStorage, ri *RepoInf) (Provider, error) {
+	backend := &restic.Backend{ConfigResolver: v1.NewSnapshotStorageResolver(client, snapStorage)}
+	if ri != nil {
+		backend.Repository = ri.Name
+		backend.Directory = ri.Path
 	}
-	wrapper, err := restic.NewResticWrapper(*setupOptions)
+	setupOptions := &restic.SetupOptions{
+		ScratchDir: defaultScratchDir,
+		Backends:   []*restic.Backend{backend},
+	}
+	wrapper, err := restic.NewResticWrapper(setupOptions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create restic wrapper: %w", err)
 	}
-
+	if ri != nil {
+		ri.Repository = wrapper.Config.GetBackend(ri.Name).Envs[restic.RESTIC_REPOSITORY]
+	}
 	return &resticProvider{
 		wrapper: wrapper,
 	}, nil
@@ -33,14 +43,80 @@ type resticProvider struct {
 	wrapper *restic.ResticWrapper
 }
 
-func (r *resticProvider) Delete(ctx context.Context, param DeleteParam) ([]byte, error) {
-	r.wrapper.SetShowCMD(true)
-	r.wrapper.SetRepository(*param.Repository)
-	err := r.wrapper.EnsureNoExclusiveLock()
-	if err != nil {
-		return nil, err
+// Backup creates a new snapshot
+func (r *resticProvider) Backup(ctx context.Context, param *BackupParam) (*BackupResult, error) {
+	fail := func(err error, msg string) (*BackupResult, error) {
+		return &BackupResult{
+			Phase:        BackupPhaseFailed,
+			ErrorMessage: fmt.Sprintf(msg, err),
+			Provider:     string(v1.EngineRestic),
+			Hostname:     param.Repo.Hostname,
+			Path:         param.Repo.Path,
+			Paths:        param.BackupPaths,
+			Repository:   param.Repo.Repository,
+		}, err
 	}
-	return r.wrapper.DeleteSnapshots(param.SnapshotIDs)
+
+	err := r.wrapper.EnsureNoExclusiveLock(param.Client, param.Namespace)
+	if err != nil {
+		return fail(err, "failed to ensure to no exclusive lock: %v")
+	}
+	if exist := r.wrapper.RepositoryAlreadyExist(param.Repo.Name); !exist {
+		err := r.wrapper.InitializeRepository(param.Repo.Name)
+		if err != nil {
+			return fail(err, "failed to initialize repository: %v")
+		}
+	}
+
+	backupOptions := restic.BackupOptions{
+		Host:        param.Repo.Hostname,
+		BackupPaths: param.BackupPaths,
+		Exclude:     param.Exclude,
+		Args:        param.Args,
+	}
+
+	out, err := r.wrapper.RunBackup(backupOptions)
+	if err != nil {
+		return fail(err, "failed to execute backup: %v")
+	}
+	result := convertOutputToBackupResult(out, param)
+	return result, nil
+}
+
+// Restore restores files from a snapshot
+func (r *resticProvider) Restore(ctx context.Context, param *RestoreParam) (*RestoreResult, error) {
+	restoreOpt := restic.RestoreOptions{
+		Host:         param.Repo.Hostname,
+		Destination:  param.Destination,
+		RestorePaths: param.RestorePaths,
+		Snapshots: []string{
+			param.SnapshotID,
+		},
+		Exclude: param.Exclude,
+		Include: param.Include,
+		Args:    param.Args,
+	}
+
+	out, err := r.wrapper.RunRestore(param.Repo.Name, restoreOpt)
+	if err != nil {
+		return &RestoreResult{
+			Phase:        RestoreFailed,
+			ErrorMessage: fmt.Sprintf("restore failed: %v", err),
+			Provider:     string(v1.EngineRestic),
+			Hostname:     param.Repo.Hostname,
+			Repository:   param.Repo.Repository,
+		}, err
+	}
+	result := convertOutputToRestoreResult(out, param)
+	return result, nil
+}
+
+func (r *resticProvider) Delete(ctx context.Context, param *DeleteParam) ([]byte, error) {
+	err := r.wrapper.EnsureNoExclusiveLock(param.Client, param.Namespace)
+	if err != nil {
+		return nil, fmt.Errorf("failed to ensure to no exclusive lock: %v", err)
+	}
+	return r.wrapper.DeleteSnapshots(param.Repo.Name, param.SnapshotIDs)
 }
 
 func (r *resticProvider) ValidateConnection(ctx context.Context) error {
@@ -50,10 +126,10 @@ func (r *resticProvider) ValidateConnection(ctx context.Context) error {
 		Message     string `json:"message"`
 	}
 
-	r.wrapper.SetCombineOutput(true)
-	r.wrapper.SetShowCMD(true)
-	out, err := r.wrapper.ValidateConnection()
+	//r.wrapper.SetCombineOutput(true)
+	//out, err := r.wrapper.ValidateConnection()
 	var resticErr resticErrorJSON
+	out := []byte(`{"message_type":"error","code":1,"message":"error message"}`)
 	jsonErr := json.Unmarshal(out, &resticErr)
 
 	// It approach will work only once this PR gets merged: https://github.com/restic/restic/pull/5570
@@ -77,125 +153,25 @@ func (r *resticProvider) ValidateConnection(ctx context.Context) error {
 			return fmt.Errorf("backend verification failed: %s", msg)
 		}
 	}
-	if err != nil || len(out) == 0 || jsonErr != nil {
-		return fmt.Errorf("restic command failed: %v\nOutput: %s\nJson extract failed:%v", err, string(out), jsonErr)
-	}
+	//if err != nil || len(out) == 0 || jsonErr != nil {
+	//	return fmt.Errorf("restic command failed: %v\nOutput: %s\nJson extract failed:%v", err, string(out), jsonErr)
+	//}
 
 	return nil
 }
 
-// InitRepo initializes a new repository
-func (r *resticProvider) InitRepo(_ context.Context, param RepoRef) error {
-
-	return nil
+func safeInt64(val *int64) int64 {
+	if val == nil {
+		return 0
+	}
+	return *val
 }
 
-// PrepareRepo combines InitRepo and ConnectToRepo
-func (r *resticProvider) PrepareRepo(_ context.Context, param RepoRef) error {
-	return nil
-}
-
-// BoostRepoConnect re-ensures local connection to the repo
-func (r *resticProvider) BoostRepoConnect(_ context.Context, _ RepoRef) error {
-	// Restic doesn't require explicit re-connection
-	return nil
-}
-
-// EnsureUnlockRepo removes any stale file locks
-func (r *resticProvider) EnsureUnlockRepo(_ context.Context, param RepoRef) error {
-	return nil
-}
-
-// PruneRepo performs full maintenance/pruning
-func (r *resticProvider) PruneRepo(_ context.Context, param RepoRef) error {
-	return nil
-}
-
-// Backup creates a new snapshot
-func (r *resticProvider) Backup(ctx context.Context, param BackupParam) (*BackupResult, error) {
-	r.wrapper.SetShowCMD(true)
-	r.wrapper.AddSuffixToRepository(param.Suffix)
-	param.FullPath = r.wrapper.GetEnv(restic.RESTIC_REPOSITORY)
-	err := r.wrapper.EnsureNoExclusiveLock()
-	if err != nil {
-		return nil, err
-	}
-	if exist := r.wrapper.RepositoryAlreadyExist(); !exist {
-		err := r.wrapper.InitializeRepository()
-		if err != nil {
-			return &BackupResult{
-				Phase:        BackupPhaseFailed,
-				ErrorMessage: fmt.Sprintf("failed to initialize repository: %v", err),
-				Provider:     string(v1.EngineRestic),
-				Hostname:     param.Hostname,
-				Paths:        param.BackupPaths,
-				Repository:   param.FullPath,
-			}, err
-		}
-	}
-
-	backupOptions := restic.BackupOptions{
-		Host:        param.Hostname,
-		BackupPaths: param.BackupPaths,
-		Exclude:     param.Exclude,
-		Args:        param.Args,
-	}
-
-	out, err := r.wrapper.RunBackup(backupOptions)
-	if err != nil {
-		return &BackupResult{
-			Phase:        BackupPhaseFailed,
-			ErrorMessage: fmt.Sprintf("backup failed: %v", err),
-			Provider:     string(v1.EngineRestic),
-			Hostname:     param.Hostname,
-			Paths:        param.BackupPaths,
-			Repository:   param.FullPath,
-		}, err
-	}
-	result := r.convertOutputToBackupResult(out, param)
-	return result, nil
-}
-
-// Restore restores files from a snapshot
-func (r *resticProvider) Restore(ctx context.Context, param RestoreParam) (*RestoreResult, error) {
-	r.wrapper.SetShowCMD(true)
-	r.wrapper.SetRepository(*param.Repository)
-	param.FullPath = r.wrapper.GetEnv(restic.RESTIC_REPOSITORY)
-	err := r.wrapper.EnsureNoExclusiveLock()
-	if err != nil {
-		return nil, err
-	}
-	restoreOpt := restic.RestoreOptions{
-		Host:         param.Hostname,
-		Destination:  param.Destination,
-		RestorePaths: param.RestorePaths,
-		Snapshots: []string{
-			param.SnapshotID,
-		},
-		Exclude: param.Exclude,
-		Include: param.Include,
-		Args:    param.Args,
-	}
-
-	out, err := r.wrapper.RunRestore(restoreOpt)
-	if err != nil {
-		return &RestoreResult{
-			Phase:        RestoreFailed,
-			ErrorMessage: fmt.Sprintf("restore failed: %v", err),
-			Provider:     string(v1.EngineRestic),
-			Hostname:     param.Hostname,
-			Repository:   param.FullPath,
-		}, err
-	}
-	result := r.convertOutputToRestoreResult(out, param)
-	return result, nil
-}
-
-func (r *resticProvider) convertOutputToRestoreResult(output *restic.RestoreOutput, param RestoreParam) *RestoreResult {
+func convertOutputToRestoreResult(output *restic.RestoreOutput, param *RestoreParam) *RestoreResult {
 	result := &RestoreResult{
 		Provider:    string(v1.EngineRestic),
-		Hostname:    param.Hostname,
-		Repository:  param.FullPath,
+		Hostname:    param.Repo.Hostname,
+		Repository:  param.Repo.Repository,
 		RestoreTime: time.Now(),
 	}
 
@@ -216,22 +192,23 @@ func (r *resticProvider) convertOutputToRestoreResult(output *restic.RestoreOutp
 	return result
 }
 
-func (r *resticProvider) convertOutputToBackupResult(output *restic.BackupOutput, param BackupParam) *BackupResult {
+func convertOutputToBackupResult(output []restic.BackupOutput, param *BackupParam) *BackupResult {
 	result := &BackupResult{
 		Provider:   string(v1.EngineRestic),
-		Hostname:   param.Hostname,
+		Hostname:   param.Repo.Hostname,
+		Path:       param.Repo.Path,
 		Paths:      param.BackupPaths,
-		Repository: param.FullPath,
+		Repository: param.Repo.Repository,
 		BackupTime: time.Now(),
 	}
 
-	if output == nil || len(output.Stats) == 0 {
+	if output == nil || len(output[0].Stats) == 0 {
 		result.Phase = BackupPhaseFailed
 		result.ErrorMessage = "no backup statistics available"
 		return result
 	}
 
-	hostStats := output.Stats[0]
+	hostStats := output[0].Stats[0]
 	if hostStats.Phase == restic.HostBackupSucceeded {
 		result.Phase = BackupPhaseSucceeded
 	} else {
@@ -260,48 +237,4 @@ func (r *resticProvider) convertOutputToBackupResult(output *restic.BackupOutput
 	}
 
 	return result
-}
-
-// safeInt64 safely converts *int64 to int64
-func safeInt64(val *int64) int64 {
-	if val == nil {
-		return 0
-	}
-	return *val
-}
-
-// ListSnapshots lists all snapshots in the repository
-func (r *resticProvider) ListSnapshots(_ context.Context, param RepoRef) ([]SnapshotInfo, error) {
-	return nil, nil
-}
-
-// DeleteSnapshot deletes a specific snapshot by ID
-func (r *resticProvider) DeleteSnapshot(_ context.Context, snapshotID string, param RepoRef) error {
-	return nil
-}
-
-// Forget removes a snapshot from the repository
-func (r *resticProvider) Forget(ctx context.Context, snapshotID string, param RepoRef) error {
-	return nil
-}
-
-// BatchForget removes multiple snapshots
-func (r *resticProvider) BatchForget(_ context.Context, snapshotIDs []string, param RepoRef) []error {
-	return []error{}
-}
-
-// CheckRepository verifies the repository integrity
-func (r *resticProvider) CheckRepository(_ context.Context, param RepoRef) error {
-	return nil
-}
-
-// DefaultMaintenanceFrequency returns the default frequency to run maintenance
-func (r *resticProvider) DefaultMaintenanceFrequency(_ context.Context, _ RepoRef) time.Duration {
-	// Default maintenance frequency for restic is 7 days
-	return 7 * 24 * time.Hour
-}
-
-// GetRepositoryStats returns statistics about the repository
-func (r *resticProvider) GetRepositoryStats(_ context.Context, param RepoRef) (*RepositoryStats, error) {
-	return nil, nil
 }

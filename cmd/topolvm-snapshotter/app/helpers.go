@@ -3,8 +3,11 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 
+	"github.com/go-logr/logr"
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
+	"github.com/topolvm/topolvm/internal/backupengine/provider"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,6 +35,16 @@ func NewRuntimeClient(config *restclient.Config) (client.Client, error) {
 		Scheme: scheme,
 		Mapper: mapper,
 	})
+}
+
+func getProvider(kbClient client.Client, log logr.Logger,
+	bs *topolvmv1.SnapshotBackupStorage, ri *provider.RepoInf) (provider.Provider, error) {
+	pvider, err := provider.GetProvider(kbClient, bs, ri)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get snapshot provider: %w", err)
+	}
+	log.Info("snapshot backup provider initialized", "engine", bs.Spec.Engine)
+	return pvider, nil
 }
 
 func fetchSnapshotStorage(ctx context.Context, rClient client.Client,
@@ -78,9 +91,9 @@ func updateLVStatusCondition(ctx context.Context, kClient client.Client, lv *top
 }
 
 func setStatusFailed(ctx context.Context, rClient client.Client,
-	logicalVol *topolvmv1.LogicalVolume, errorMessage string) error {
+	logicalVol *topolvmv1.LogicalVolume, errCode, errorMessage string) error {
 	snapshotErr := &topolvmv1.SnapshotError{
-		Code:    backupErrorCode,
+		Code:    errCode,
 		Message: errorMessage,
 	}
 
@@ -99,4 +112,12 @@ func setStatusFailed(ctx context.Context, rClient client.Client,
 		return fmt.Errorf("failed to update online snapshot status: %w", err)
 	}
 	return nil
+}
+
+func getNamespace() string {
+	namespace := os.Getenv(envHostNamespace)
+	if namespace == "" {
+		namespace = "topolvm-system"
+	}
+	return namespace
 }

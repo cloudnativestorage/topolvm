@@ -16,11 +16,10 @@ import (
 // operations using restic forget. It copies the spec from the DaemonSet pod template
 // and injects a specialized delete container.
 type DeleteExecutor struct {
-	client        client.Client
-	logicalVolume *topolvmv1.LogicalVolume
-	vsClass       *snapshot_api.VolumeSnapshotClass
-
 	namespace string
+	client    client.Client
+	lv        *topolvmv1.LogicalVolume
+	vsClass   *snapshot_api.VolumeSnapshotClass
 }
 
 // NewSnapshotDeleteExecutor creates a new DeleteExecutor instance with the provided dependencies.
@@ -30,15 +29,15 @@ func NewSnapshotDeleteExecutor(
 	vsClass *snapshot_api.VolumeSnapshotClass,
 ) *DeleteExecutor {
 	return &DeleteExecutor{
-		client:        client,
-		logicalVolume: logicalVolume,
-		vsClass:       vsClass,
+		client:  client,
+		lv:      logicalVolume,
+		vsClass: vsClass,
 	}
 }
 
 // Execute creates a delete pod that will perform the snapshot deletion operation.
 func (e *DeleteExecutor) Execute() error {
-	objMeta := buildObjectMeta(topolvmv1.OperationDelete, e.logicalVolume)
+	objMeta := buildObjectMeta(topolvmv1.OperationDelete, e.lv)
 	hostPod, err := getHostPod(e.client)
 	if err != nil {
 		return err
@@ -122,6 +121,7 @@ func (e *DeleteExecutor) buildDeleteContainer(templateContainer *corev1.Containe
 		},
 		Args:            e.buildDeleteArgs(),
 		VolumeMounts:    []corev1.VolumeMount{}, // No volume mounts needed for delete
+		Env:             e.buildDeleteEnv(),
 		SecurityContext: e.buildSecurityContext(),
 		Resources:       e.buildResourceRequirements(),
 	}
@@ -138,19 +138,26 @@ func (e *DeleteExecutor) buildDeleteArgs() []string {
 	}
 
 	// Validate that we have snapshot information
-	if e.logicalVolume.Status.Snapshot == nil {
-		logger.Error(nil, "LogicalVolume has no snapshot status", "lv", e.logicalVolume.Name)
+	if e.lv.Status.Snapshot == nil {
+		logger.Error(nil, "LogicalVolume has no snapshot status", "lv", e.lv.Name)
 		return []string{}
 	}
 
 	args := []string{
-		fmt.Sprintf("--lv-name=%s", e.logicalVolume.Name),
-		fmt.Sprintf("--repository=%s", e.logicalVolume.Status.Snapshot.Repository),
+		fmt.Sprintf("--lv-name=%s", e.lv.Name),
+		fmt.Sprintf("--repo-path=%s", e.lv.Status.Snapshot.Path),
 		fmt.Sprintf("--snapshot-storage-name=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageName])),
 		fmt.Sprintf("--snapshot-storage-namespace=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageNamespace])),
 	}
 
 	return args
+}
+
+// buildDeleteEnv constructs the environment variables for the delete container.
+func (e *DeleteExecutor) buildDeleteEnv() []corev1.EnvVar {
+	var env []corev1.EnvVar
+	env = append(env, corev1.EnvVar{Name: EnvHostNamespace, Value: getNamespace()})
+	return env
 }
 
 func (e *DeleteExecutor) buildSecurityContext() *corev1.SecurityContext {

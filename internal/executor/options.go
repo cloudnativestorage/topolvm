@@ -62,10 +62,10 @@ package executor
 //// NewSnapshotExecutorWithOptions creates a new SnapshotExecutor with functional options.
 //func NewSnapshotExecutorWithOptions(
 //	client client.client,
-//	logicalVolume topolvmv1.LogicalVolume,
+//	lv topolvmv1.LogicalVolume,
 //	opts ...SnapshotExecutorOption,
 //) *SnapshotExecutor {
-//	executor := NewSnapshotBackupExecutor(client, logicalVolume)
+//	executor := NewSnapshotBackupExecutor(client, lv)
 //
 //	for _, opt := range opts {
 //		opt(executor)
@@ -80,15 +80,15 @@ package executor
 //		return fmt.Errorf("client is required")
 //	}
 //
-//	if e.logicalVolume.Name == "" {
+//	if e.lv.Name == "" {
 //		return fmt.Errorf("logical volume name is required")
 //	}
 //
-//	if e.logicalVolume.Spec.NodeName == "" {
+//	if e.lv.Spec.NodeName == "" {
 //		return fmt.Errorf("logical volume node name is required")
 //	}
 //
-//	if e.logicalVolume.Spec.Size.IsZero() {
+//	if e.lv.Spec.Size.IsZero() {
 //		return fmt.Errorf("logical volume size must be greater than zero")
 //	}
 //

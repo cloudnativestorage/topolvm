@@ -72,10 +72,10 @@ type SnapshotStatus struct {
 	// Error contains details if the operation encountered an error.
 	// +optional
 	Error *SnapshotError `json:"error,omitempty"`
-	// Paths are the paths that were backed up or restored
+	// Path represents the directory inside the SnapshotStorage where this backup was stored.
 	// +optional
-	Paths []string `json:"paths,omitempty"`
-	// Repository is the Restic repository path where the snapshot is stored
+	Path string `json:"path,omitempty"`
+	// Repository is the Restic repository path/url where the snapshot is stored
 	// +optional
 	Repository string `json:"repository,omitempty"`
 	// SnapshotID is the identifier of the Restic snapshot involved in the operation.

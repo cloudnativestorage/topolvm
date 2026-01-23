@@ -22,11 +22,10 @@ type RestoreOptions struct {
 	// Logical volume details
 	lvName     string
 	nodeName   string
-	mountPath  string
 	logicalVol *topolvmv1.LogicalVolume
 
 	// References
-	repository string
+	repoPath   string
 	snapshotID string
 	//timeout            time.Duration
 	snapshotStorageRef types.NamespacedName
@@ -40,7 +39,7 @@ func newRestoreCommand() *cobra.Command {
 		Use:   "restore",
 		Short: "Restore a logical volume from an online snapshot",
 		Long: `The restore command restores data from a previously created online snapshot.
-				It retrieves the data from the remote repository using Restic or Kopia and writes it to the mounted filesystem.`,
+				It retrieves the data from the remote repoPath using Restic or Kopia and writes it to the mounted filesystem.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			rOpt.log = ctrl.Log.WithName("restore")
@@ -70,6 +69,10 @@ func parseRestoreFlags(cmd *cobra.Command) {
 		"", "Name of the logical volume to backup (required)")
 	cmd.Flags().StringVar(&rOpt.nodeName, "node-name",
 		"", "Node name where the logical volume resides (required)")
+	cmd.Flags().StringVar(&rOpt.repoPath, "repo-path",
+		"", "Path of the repoPath where the snapshot is stored")
+	cmd.Flags().StringVar(&rOpt.snapshotID, "snapshot-id",
+		"", "Restic Snapshot ID which needs to be restored (required)")
 	cmd.Flags().StringVar(&rOpt.snapshotStorageRef.Namespace, "snapshot-storage-namespace",
 		"", "Namespace of the SnapshotBackupStorage CR")
 	cmd.Flags().StringVar(&rOpt.snapshotStorageRef.Name, "snapshot-storage-name",
@@ -106,16 +109,8 @@ func (opt *RestoreOptions) setStatusRunning(ctx context.Context) error {
 func (opt *RestoreOptions) performRestore(ctx context.Context) error {
 	opt.log.Info("starting restore operation",
 		"lvName", opt.lvName,
-		"nodeName", opt.nodeName,
-		"mountPath", opt.mountPath)
-
-	pvider, err := opt.getRestoreProvider()
-	if err != nil {
-		opt.handleRestoreError(ctx, "failed to initialize restore provider", err)
-		return err
-	}
-
-	result, err := opt.executeRestore(ctx, pvider)
+		"nodeName", opt.nodeName)
+	result, err := opt.executeRestore(ctx)
 	if err != nil {
 		opt.handleRestoreError(ctx, "restore execution failed", err)
 		return err
@@ -167,23 +162,18 @@ func (opt *RestoreOptions) setStatusSuccess(ctx context.Context, result *provide
 	return nil
 }
 
-func (opt *RestoreOptions) getRestoreProvider() (provider.Provider, error) {
-	pvider, err := provider.GetProvider(opt.client, opt.snapshotStorage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get snapshot provider: %w", err)
-	}
-	opt.log.Info("backup provider initialized", "engine", opt.snapshotStorage.Spec.Engine)
-	return pvider, nil
-}
-
-func (opt *RestoreOptions) executeRestore(ctx context.Context,
-	pvider provider.Provider) (*provider.RestoreResult, error) {
+func (opt *RestoreOptions) executeRestore(ctx context.Context) (*provider.RestoreResult, error) {
 	params := opt.buildRestoreParams()
 	opt.log.Info("executing restore with params",
-		"repository", params.Repository,
+		"repo-path", params.Repo.Path,
 		"paths", params.RestorePaths,
 		"exclude", params.Exclude,
 		"args", params.Args)
+
+	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize restore provider: %w", err)
+	}
 
 	result, err := pvider.Restore(ctx, params)
 	if err != nil {
@@ -197,10 +187,11 @@ func (opt *RestoreOptions) executeRestore(ctx context.Context,
 	return result, nil
 }
 
-func (opt *RestoreOptions) buildRestoreParams() provider.RestoreParam {
-	return provider.RestoreParam{
-		RepoRef: provider.RepoRef{
-			Repository: &opt.repository,
+func (opt *RestoreOptions) buildRestoreParams() *provider.RestoreParam {
+	return &provider.RestoreParam{
+		Repo: &provider.RepoInf{
+			Name: opt.repoPath,
+			Path: opt.repoPath,
 		},
 		SnapshotID: opt.snapshotID,
 		//Destination: opt.mountPath,
@@ -211,7 +202,7 @@ func (opt *RestoreOptions) handleRestoreError(ctx context.Context, message strin
 	opt.log.Error(err, message, "lvName", opt.lvName)
 
 	errorMsg := err.Error()
-	if updateErr := setStatusFailed(ctx, opt.client, opt.logicalVol, errorMsg); updateErr != nil {
+	if updateErr := setStatusFailed(ctx, opt.client, opt.logicalVol, restoreErrorCode, errorMsg); updateErr != nil {
 		opt.log.Error(updateErr, "failed to update error status", "originalError", errorMsg)
 	}
 
