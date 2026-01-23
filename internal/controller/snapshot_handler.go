@@ -10,6 +10,7 @@ import (
 	"github.com/topolvm/topolvm"
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
 	"github.com/topolvm/topolvm/internal/executor"
+	"github.com/topolvm/topolvm/internal/getter"
 	"github.com/topolvm/topolvm/internal/mounter"
 	"github.com/topolvm/topolvm/pkg/lvmd/proto"
 	"google.golang.org/grpc/codes"
@@ -51,7 +52,10 @@ func (h *snapshotHandler) buildSnapshotContext(ctx context.Context, log logr.Log
 			return fmt.Errorf("failed to set volume snapshot info: %w", err)
 		}
 		h.sourceLV = sourceLV
-		h.shouldRestore = h.shouldPerformSnapshotRestore(sourceLV)
+		h.shouldRestore, err = h.shouldPerformSnapshotRestore(sourceLV)
+		if err != nil {
+			return fmt.Errorf("failed to check if snapshot restore is needed: %w", err)
+		}
 	}
 	return nil
 }
@@ -60,13 +64,17 @@ func (h *snapshotHandler) buildSnapshotContextFrBackup(ctx context.Context, log 
 	if err := h.setVolumeSnapshotInfo(ctx, log, lv); err != nil {
 		return fmt.Errorf("failed to set volume snapshot info: %w", err)
 	}
-	h.shouldBackup = h.vsClass != nil && isOnlineSnapshotEnabled(h.vsClass)
+	enable, err := IsOnlineSnapshotEnabled(h.vsClass)
+	if err != nil {
+		return fmt.Errorf("failed to check if online snapshot is enabled: %w", err)
+	}
+	h.shouldBackup = h.vsClass != nil && enable
 	return nil
 }
 
 func (h *snapshotHandler) setVolumeSnapshotInfo(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) error {
 	var err error
-	h.vsContent, h.vsClass, err = h.getVolumeSnapshotInfo(ctx, lv)
+	h.vsContent, h.vsClass, err = getVolumeSnapshotInfo(ctx, h.client, lv)
 	if err != nil {
 		log.Error(err, "failed to get VolumeSnapshotContent/VolumeSnapshotClass", "name", lv.Name)
 		return err
@@ -90,50 +98,13 @@ func (h *snapshotHandler) getSourceLV(ctx context.Context, lv *topolvmv1.Logical
 	return sourceLV, nil
 }
 
-func (h *snapshotHandler) getVolumeSnapshotInfo(ctx context.Context, lv *topolvmv1.LogicalVolume) (*snapshot_api.VolumeSnapshotContent, *snapshot_api.VolumeSnapshotClass, error) {
-	vsContent, err := h.getVolumeSnapshotContentIfExists(ctx, lv)
-	if err != nil {
-		return nil, nil, client.IgnoreNotFound(err)
-	}
-	if vsContent == nil {
-		return nil, nil, nil
-	}
-	vsClass, err := h.getVolumeSnapshotClassFromContent(ctx, vsContent)
-	return vsContent, vsClass, err
-}
-
-func (h *snapshotHandler) getVolumeSnapshotContentIfExists(ctx context.Context, lv *topolvmv1.LogicalVolume) (*snapshot_api.VolumeSnapshotContent, error) {
-	var content *snapshot_api.VolumeSnapshotContent
-	var err error
-	if lv.Spec.Source != "" {
-		content, err = getVolumeSnapshotContent(ctx, h.client, lv)
-	}
-	return content, err
-}
-
-func (h *snapshotHandler) getVolumeSnapshotClassFromContent(ctx context.Context, content *snapshot_api.VolumeSnapshotContent) (*snapshot_api.VolumeSnapshotClass, error) {
-	if content.Spec.VolumeSnapshotClassName == nil {
-		return nil, fmt.Errorf("VolumeSnapshotContent %s does not have VolumeSnapshotClassName set", content.Name)
-	}
-
-	vsClass := &snapshot_api.VolumeSnapshotClass{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: *content.Spec.VolumeSnapshotClassName,
-		},
-	}
-	if err := h.client.Get(ctx, client.ObjectKeyFromObject(vsClass), vsClass); err != nil {
-		return nil, fmt.Errorf("unable to fetch VolumeSnapshotClass %s: %w", *content.Spec.VolumeSnapshotClassName, err)
-	}
-	return vsClass, nil
-}
-
-func (h *snapshotHandler) shouldPerformSnapshotRestore(sourceLV *topolvmv1.LogicalVolume) bool {
+func (h *snapshotHandler) shouldPerformSnapshotRestore(sourceLV *topolvmv1.LogicalVolume) (bool, error) {
 	// Check if source snapshot is ready or already completed
 	if sourceLV.Status.Snapshot == nil ||
 		(sourceLV.Status.Snapshot != nil && sourceLV.Status.Snapshot.Phase == topolvmv1.OperationPhaseSucceeded) {
-		return isOnlineSnapshotEnabled(h.vsClass)
+		return IsOnlineSnapshotEnabled(h.vsClass)
 	}
-	return false
+	return false, nil
 }
 
 func (h *snapshotHandler) checkPVExists(ctx context.Context, lv *topolvmv1.LogicalVolume) (bool, error) {
@@ -403,23 +374,71 @@ func (h *snapshotHandler) updateSnapshotOperationStatus(ctx context.Context, lv 
 	return nil
 }
 
-func isOnlineSnapshotEnabled(vsClass *snapshot_api.VolumeSnapshotClass) bool {
+func IsOnlineSnapshotEnabled(args ...any) (bool, error) {
+	var err error
+	var vsClass *snapshot_api.VolumeSnapshotClass
+	if len(args) == 3 {
+		_, vsClass, err = getVolumeSnapshotInfo(args[0].(context.Context),
+			args[1].(getter.Interface), args[2].(*topolvmv1.LogicalVolume))
+		if err != nil {
+			return false, err
+		}
+	} else {
+		vsClass = args[0].(*snapshot_api.VolumeSnapshotClass)
+	}
 	if vsClass == nil {
-		return false
+		return false, nil
 	}
 
 	snapshotMode, exists := vsClass.Parameters[SnapshotMode]
-	return exists && snapshotMode == SnapshotModeOnline
+	return exists && snapshotMode == SnapshotModeOnline, nil
 }
 
-func getVolumeSnapshotContent(ctx context.Context, rClient client.Client, lv *topolvmv1.LogicalVolume) (*snapshot_api.VolumeSnapshotContent, error) {
+func getVolumeSnapshotInfo(ctx context.Context, getter getter.Interface, lv *topolvmv1.LogicalVolume) (*snapshot_api.VolumeSnapshotContent, *snapshot_api.VolumeSnapshotClass, error) {
+	vsContent, err := getVolumeSnapshotContentIfExists(ctx, getter, lv)
+	if err != nil {
+		return nil, nil, client.IgnoreNotFound(err)
+	}
+	if vsContent == nil {
+		return nil, nil, nil
+	}
+	vsClass, err := getVolumeSnapshotClassFromContent(ctx, getter, vsContent)
+	return vsContent, vsClass, err
+}
+
+func getVolumeSnapshotClassFromContent(ctx context.Context, getter getter.Interface, content *snapshot_api.VolumeSnapshotContent) (*snapshot_api.VolumeSnapshotClass, error) {
+	if content.Spec.VolumeSnapshotClassName == nil {
+		return nil, fmt.Errorf("VolumeSnapshotContent %s does not have VolumeSnapshotClassName set", content.Name)
+	}
+
+	vsClass := &snapshot_api.VolumeSnapshotClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: *content.Spec.VolumeSnapshotClassName,
+		},
+	}
+	if err := getter.Get(ctx, client.ObjectKeyFromObject(vsClass), vsClass); err != nil {
+		return nil, fmt.Errorf("unable to fetch VolumeSnapshotClass %s: %w", *content.Spec.VolumeSnapshotClassName, err)
+	}
+	return vsClass, nil
+}
+
+func getVolumeSnapshotContentIfExists(ctx context.Context, getter getter.Interface, lv *topolvmv1.LogicalVolume) (*snapshot_api.VolumeSnapshotContent, error) {
+	var content *snapshot_api.VolumeSnapshotContent
+	var err error
+	if lv.Spec.Source != "" {
+		content, err = getVolumeSnapshotContent(ctx, getter, lv)
+	}
+	return content, err
+}
+
+func getVolumeSnapshotContent(ctx context.Context, getter getter.Interface, lv *topolvmv1.LogicalVolume) (*snapshot_api.VolumeSnapshotContent, error) {
 	content := &snapshot_api.VolumeSnapshotContent{
 		ObjectMeta: metav1.ObjectMeta{
 			// https://github.com/kubernetes-csi/external-snapshotter/blob/master/pkg/utils/util.go#L283
 			Name: fmt.Sprintf("snapcontent%s", strings.TrimPrefix(lv.Spec.Name, "snapshot")),
 		},
 	}
-	if err := rClient.Get(ctx, client.ObjectKeyFromObject(content), content); err != nil {
+	if err := getter.Get(ctx, client.ObjectKeyFromObject(content), content); err != nil {
 		return nil, err
 	}
 	return content, nil

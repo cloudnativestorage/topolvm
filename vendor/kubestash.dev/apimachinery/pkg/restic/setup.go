@@ -115,11 +115,6 @@ func (w *ResticWrapper) setupEnvsForBackend(b *Backend) error {
 	default:
 		return fmt.Errorf("unsupported storage provider: %s", b.Provider)
 	}
-
-	fmt.Println("Len Envs:", len(b.Envs))
-	for k,v := range b.Envs {
-		fmt.Println("Envs:", k, v)
-	}
 	return nil
 }
 
