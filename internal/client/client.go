@@ -117,6 +117,11 @@ type wrappedClient struct {
 	client client.Client
 }
 
+func (c *wrappedClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+	//TODO implement me
+	panic("implement me")
+}
+
 var _ client.Client = &wrappedClient{}
 
 func NewWrappedClient(c client.Client) client.Client {

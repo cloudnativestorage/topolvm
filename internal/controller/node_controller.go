@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/go-logr/logr"
 	"github.com/topolvm/topolvm"
@@ -136,7 +135,6 @@ func (r *NodeReconciler) doFinalize(ctx context.Context, log logr.Logger, node c
 	}
 	for _, lv := range lvList.Items {
 		if !r.isLVHasSnapshot(&lv) {
-			fmt.Println("######################### Why I am here #############33")
 			err = r.cleanupLogicalVolume(ctx, log, &lv)
 			if err != nil {
 				return err

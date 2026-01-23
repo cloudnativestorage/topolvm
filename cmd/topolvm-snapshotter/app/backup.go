@@ -45,7 +45,7 @@ func newBackupCommand() *cobra.Command {
 		Use:   "backup",
 		Short: "Take an online snapshot of a logical volume",
 		Long: `The backup command performs an online snapshot of a logical volume.
-		It backs up the mounted filesystem to a remote repository using Restic or Kopia.`,
+		It backs up the mounted filesystem to a remote repoPath using Restic or Kopia.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := context.Background()
 			bOpt.log = ctrl.Log.WithName("backup")
@@ -152,13 +152,7 @@ func (opt *BackupOptions) performBackup(ctx context.Context) error {
 		"nodeName", opt.nodeName,
 		"mountPath", opt.mountPath)
 
-	pvider, err := opt.getBackupProvider()
-	if err != nil {
-		opt.handleBackupError(ctx, "failed to initialize backup provider", err)
-		return err
-	}
-
-	result, err := opt.executeBackup(ctx, pvider)
+	result, err := opt.executeBackup(ctx)
 	if err != nil {
 		opt.handleBackupError(ctx, "backup execution failed", err)
 		return err
@@ -170,24 +164,16 @@ func (opt *BackupOptions) performBackup(ctx context.Context) error {
 	return nil
 }
 
-func (opt *BackupOptions) getBackupProvider() (provider.Provider, error) {
-	pvider, err := provider.GetProvider(opt.client, opt.snapshotStorage)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get snapshot provider: %w", err)
-	}
-	opt.log.Info("backup provider initialized", "engine", opt.snapshotStorage.Spec.Engine)
-	return pvider, nil
-}
-
-func (opt *BackupOptions) executeBackup(ctx context.Context, pvider provider.Provider) (*provider.BackupResult, error) {
+func (opt *BackupOptions) executeBackup(ctx context.Context) (*provider.BackupResult, error) {
 	params := opt.buildBackupParams()
 	opt.log.Info("executing backup with params",
-		"repository", params.Suffix,
-		"paths", params.BackupPaths,
-		"exclude", params.Exclude,
-		"args", params.Args,
+		"repo-name", params.Repo.Name, "repo-path", params.Repo.Path,
+		"backup-paths", params.BackupPaths, "exclude", params.Exclude, "args", params.Args,
 	)
-
+	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize backup provider: %w", err)
+	}
 	result, err := pvider.Backup(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("backup operation failed: %w", err)
@@ -204,7 +190,7 @@ func (opt *BackupOptions) handleBackupError(ctx context.Context, message string,
 	opt.log.Error(err, message, "lvName", opt.lvName)
 
 	errorMsg := err.Error()
-	if updateErr := setStatusFailed(ctx, opt.client, opt.logicalVol, errorMsg); updateErr != nil {
+	if updateErr := setStatusFailed(ctx, opt.client, opt.logicalVol, backupErrorCode, errorMsg); updateErr != nil {
 		opt.log.Error(updateErr, "failed to update error status", "originalError", errorMsg)
 	}
 
@@ -228,12 +214,15 @@ func (opt *BackupOptions) handleBackupSuccess(ctx context.Context, result *provi
 	return nil
 }
 
-func (opt *BackupOptions) buildBackupParams() provider.BackupParam {
-	return provider.BackupParam{
-		RepoRef: provider.RepoRef{
-			Suffix: filepath.Join(opt.targetedPVCRef.Namespace, opt.targetedPVCRef.Name),
+func (opt *BackupOptions) buildBackupParams() *provider.BackupParam {
+	return &provider.BackupParam{
+		Client:    opt.client,
+		Namespace: getNamespace(),
+		Repo: &provider.RepoInf{
+			Name: filepath.Join(opt.targetedPVCRef.Namespace, opt.targetedPVCRef.Name),
+			Path: filepath.Join(opt.targetedPVCRef.Namespace, opt.targetedPVCRef.Name),
 		},
-		BackupPaths: []string{opt.mountPath},
+		BackupPaths: []string{filepath.Join("/", opt.mountPath)},
 	}
 }
 
@@ -272,6 +261,7 @@ func (opt *BackupOptions) setStatusSuccess(ctx context.Context, result *provider
 	lv.Status.Snapshot.Duration = result.Duration
 	lv.Status.Snapshot.Version = result.Provider
 	lv.Status.Snapshot.Error = nil
+	lv.Status.Snapshot.Path = result.Path
 	lv.Status.Snapshot.Repository = result.Repository
 	if err := opt.client.Status().Update(ctx, lv); err != nil {
 		return fmt.Errorf("failed to update status: %w", err)

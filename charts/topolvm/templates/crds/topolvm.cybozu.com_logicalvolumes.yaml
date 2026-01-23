@@ -177,11 +177,10 @@ spec:
                     description: Operation indicates whether this status is for a
                       backup or a restore.
                     type: string
-                  paths:
-                    description: Paths are the paths that were backed up or restored
-                    items:
-                      type: string
-                    type: array
+                  path:
+                    description: Path represents the directory inside the SnapshotStorage
+                      where this backup was stored.
+                    type: string
                   phase:
                     description: Phase represents the current phase of the backup
                       or restore operation.
@@ -202,8 +201,8 @@ spec:
                         type: integer
                     type: object
                   repository:
-                    description: Repository is the Restic repository path where the
-                      snapshot is stored
+                    description: Repository is the Restic repository path/url where
+                      the snapshot is stored
                     type: string
                   snapshotID:
                     description: SnapshotID is the identifier of the Restic snapshot

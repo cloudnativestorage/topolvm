@@ -17,11 +17,11 @@ import (
 // of logical volumes from snapshots. It copies the spec from the DaemonSet pod template
 // and injects a specialized restore container.
 type RestoreExecutor struct {
-	client                client.Client
-	logicalVolume         *topolvmv1.LogicalVolume
-	snapshotLogicalVolume *topolvmv1.LogicalVolume
-	mountResponse         *mounter.MountResponse
-	vsClass               *snapshot_api.VolumeSnapshotClass
+	client        client.Client
+	lv            *topolvmv1.LogicalVolume
+	snapshotLV    *topolvmv1.LogicalVolume
+	mountResponse *mounter.MountResponse
+	vsClass       *snapshot_api.VolumeSnapshotClass
 
 	namespace string
 }
@@ -35,17 +35,17 @@ func NewSnapshotRestoreExecutor(
 	vsClass *snapshot_api.VolumeSnapshotClass,
 ) *RestoreExecutor {
 	return &RestoreExecutor{
-		client:                client,
-		logicalVolume:         logicalVolume,
-		snapshotLogicalVolume: snapshotLogicalVolume,
-		mountResponse:         resp,
-		vsClass:               vsClass,
+		client:        client,
+		lv:            logicalVolume,
+		snapshotLV:    snapshotLogicalVolume,
+		mountResponse: resp,
+		vsClass:       vsClass,
 	}
 }
 
 // Execute creates a restore pod that will perform the online restore operation.
 func (e *RestoreExecutor) Execute() error {
-	objMeta := buildObjectMeta(topolvmv1.OperationRestore, e.logicalVolume)
+	objMeta := buildObjectMeta(topolvmv1.OperationRestore, e.lv)
 	hostPod, err := getHostPod(e.client)
 	if err != nil {
 		return err
@@ -142,6 +142,7 @@ func (e *RestoreExecutor) buildRestoreContainer(templateContainer *corev1.Contai
 		},
 		Args:            e.buildRestoreArgs(),
 		VolumeMounts:    volumeMounts,
+		Env:             e.buildRestoreEnv(),
 		SecurityContext: e.buildSecurityContext(),
 		Resources:       e.buildResourceRequirements(),
 	}
@@ -157,14 +158,20 @@ func (e *RestoreExecutor) buildRestoreArgs() []string {
 		return name
 	}
 	return []string{
-		fmt.Sprintf("--mount-path=%s", SnapshotData),
-		fmt.Sprintf("--lv-name=%s", e.logicalVolume.Name),
-		fmt.Sprintf("--node-name=%s", e.logicalVolume.Spec.NodeName),
-		fmt.Sprintf("--repository=%s", e.snapshotLogicalVolume.Status.Snapshot.Repository),
-		fmt.Sprintf("--snapshot-id=%s", e.snapshotLogicalVolume.Status.Snapshot.SnapshotID),
+		fmt.Sprintf("--lv-name=%s", e.lv.Name),
+		fmt.Sprintf("--node-name=%s", e.lv.Spec.NodeName),
+		fmt.Sprintf("--repo-path=%s", e.snapshotLV.Status.Snapshot.Path),
+		fmt.Sprintf("--snapshot-id=%s", e.snapshotLV.Status.Snapshot.SnapshotID),
 		fmt.Sprintf("--snapshot-storage-name=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageName])),
 		fmt.Sprintf("--snapshot-storage-namespace=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageNamespace])),
 	}
+}
+
+// buildSnapshotEnv constructs the environment variables for the restore container.
+func (e *RestoreExecutor) buildRestoreEnv() []corev1.EnvVar {
+	var env []corev1.EnvVar
+	env = append(env, corev1.EnvVar{Name: EnvHostNamespace, Value: getNamespace()})
+	return env
 }
 
 func (e *RestoreExecutor) buildSecurityContext() *corev1.SecurityContext {
