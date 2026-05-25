@@ -87,15 +87,32 @@ type SnapshotStatus struct {
 }
 
 type OperationProgress struct {
+	// SecondsElapsed represents the seconds elapsed
 	// +optional
-	TotalBytes int64 `json:"totalBytes,omitempty"`
+	SecondsElapsed int64 `json:"secondsElapsed,omitempty"`
 
-	// +optional
-	BytesDone int64 `json:"bytesDone,omitempty"`
+	// PercentDone represents the percentage of the backup/restore that has been completed
+	//+optional
+	PercentDone string `json:"percentDone,omitempty"`
 
-	// Percentage can be calculated by controller or client (UploadedBytes / TotalBytes * 100)
+	// TotalFiles represents the total number of files that need to be transferred during the backup/restore
 	// +optional
-	Percentage string `json:"percentage,omitempty"`
+	TotalFiles int64 `json:"totalFiles,omitempty"`
+
+	// FilesDone represents the number of files done
+	// +optional
+	FilesDone int64 `json:"filesDone,omitempty"`
+
+	// TransferDone represents the amount of data has been transferred
+	// +optional
+	TransferDone string `json:"transferDone,omitempty"`
+
+	// Total represents the total amount of data that needs to be transferred during the backup
+	// +optional
+	Total string `json:"total,omitempty"`
+
+	// Speed represents the transfer speed during the backup
+	Speed string `json:"speed,omitempty"`
 }
 
 type SnapshotError struct {
@@ -103,21 +120,11 @@ type SnapshotError struct {
 	Message string `json:"message,omitempty"` // human-readable error
 }
 
-type BackupProgress struct {
-	// +optional
-	TotalBytes int64 `json:"totalBytes,omitempty"`
-
-	// +optional
-	BytesDone int64 `json:"bytesDone,omitempty"`
-
-	// Percentage can be calculated by controller or client (UploadedBytes / TotalBytes * 100)
-	// +optional
-	Percentage string `json:"percentage,omitempty"`
-}
-
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
-//+kubebuilder:resource:scope=Cluster
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.snapshot.phase"
+// +kubebuilder:printcolumn:name="Progess",type="string",JSONPath=".status.snapshot.progress.percentDone"
 
 // LogicalVolume is the Schema for the logicalvolumes API
 type LogicalVolume struct {

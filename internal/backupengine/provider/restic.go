@@ -8,7 +8,8 @@ import (
 	"time"
 
 	v1 "github.com/topolvm/topolvm/api/v1"
-	"kubestash.dev/apimachinery/pkg/restic"
+	"github.com/topolvm/topolvm/internal/backupengine/progress"
+	"gomodules.xyz/restic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -17,7 +18,7 @@ const (
 )
 
 // NewResticProvider creates a new Restic repository provider
-func NewResticProvider(client client.Client, snapStorage *v1.SnapshotBackupStorage, ri *RepoInf) (Provider, error) {
+func NewResticProvider(client client.Client, snapStorage *v1.SnapshotBackupStorage, ri *RepoInf, lv *v1.LogicalVolume) (Provider, error) {
 	backend := &restic.Backend{ConfigResolver: v1.NewSnapshotStorageResolver(client, snapStorage)}
 	if ri != nil {
 		backend.Repository = ri.Name
@@ -35,12 +36,16 @@ func NewResticProvider(client client.Client, snapStorage *v1.SnapshotBackupStora
 		ri.Repository = wrapper.Config.GetBackend(ri.Name).Envs[restic.RESTIC_REPOSITORY]
 	}
 	return &resticProvider{
-		wrapper: wrapper,
+		logiclVol: lv,
+		client:    client,
+		wrapper:   wrapper,
 	}, nil
 }
 
 type resticProvider struct {
-	wrapper *restic.ResticWrapper
+	client    client.Client
+	wrapper   *restic.ResticWrapper
+	logiclVol *v1.LogicalVolume
 }
 
 // Backup creates a new snapshot
@@ -74,6 +79,10 @@ func (r *resticProvider) Backup(ctx context.Context, param *BackupParam) (*Backu
 		Exclude:     param.Exclude,
 		Args:        param.Args,
 	}
+	fmt.Println("######################### Running with Progress Reporter")
+	progressRptr := progress.NewProgressReporter(r.client, r.wrapper, r.logiclVol)
+	progressRptr.Start()
+	defer progressRptr.Stop()
 
 	out, err := r.wrapper.RunBackup(backupOptions)
 	if err != nil {

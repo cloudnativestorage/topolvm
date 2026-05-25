@@ -182,7 +182,8 @@ lvmd:
 
   # lvmd.nodeSelector -- Specify nodeSelector.
   ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
-  nodeSelector: {}
+  nodeSelector:
+    topolvm.io/enabled: "true"
 
   # lvmd.affinity -- Specify affinity.
   ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
@@ -360,7 +361,8 @@ node:
 
   # node.nodeSelector -- Specify nodeSelector.
   ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
-  nodeSelector: {}
+  nodeSelector:
+    topolvm.io/enabled: "true"
 
   # node.affinity -- Specify affinity.
   ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
