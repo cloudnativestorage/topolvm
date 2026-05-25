@@ -38,8 +38,8 @@ func NewRuntimeClient(config *restclient.Config) (client.Client, error) {
 }
 
 func getProvider(kbClient client.Client, log logr.Logger,
-	bs *topolvmv1.SnapshotBackupStorage, ri *provider.RepoInf) (provider.Provider, error) {
-	pvider, err := provider.GetProvider(kbClient, bs, ri)
+	bs *topolvmv1.SnapshotBackupStorage, ri *provider.RepoInf, lv *topolvmv1.LogicalVolume) (provider.Provider, error) {
+	pvider, err := provider.GetProvider(kbClient, bs, ri,lv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get snapshot provider: %w", err)
 	}

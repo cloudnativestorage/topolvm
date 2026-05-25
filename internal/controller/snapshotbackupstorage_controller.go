@@ -114,7 +114,7 @@ func (r *SnapshotBackupStorageReconciler) validateAndUpdateStatus(ctx context.Co
 // validateBackendConnection validates the actual connection to the backend storage
 func (r *SnapshotBackupStorageReconciler) validateBackendConnection(ctx context.Context, storage *topolvmv1.SnapshotBackupStorage) error {
 	// Get the appropriate snapshot engine
-	engine, err := provider.GetProvider(r.client, storage, nil)
+	engine, err := provider.GetProvider(r.client, storage, nil, nil)
 	if err != nil {
 		return fmt.Errorf("failed to get snapshot engine: %w", err)
 	}

@@ -170,7 +170,7 @@ func (opt *RestoreOptions) executeRestore(ctx context.Context) (*provider.Restor
 		"exclude", params.Exclude,
 		"args", params.Args)
 
-	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo)
+	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo,opt.logicalVol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize restore provider: %w", err)
 	}

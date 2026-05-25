@@ -4,7 +4,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.1
+    controller-gen.kubebuilder.io/version: v0.19.0
   name: logicalvolumes.topolvm.cybozu.com
 spec:
   group: topolvm.cybozu.com
@@ -15,7 +15,14 @@ spec:
     singular: logicalvolume
   scope: Cluster
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - jsonPath: .status.snapshot.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.snapshot.progress.percentDone
+      name: Progess
+      type: string
+    name: v1
     schema:
       openAPIV3Schema:
         description: LogicalVolume is the Schema for the logicalvolumes API
@@ -189,16 +196,35 @@ spec:
                     description: Progress contains information about the progress
                       of the operation.
                     properties:
-                      bytesDone:
+                      filesDone:
+                        description: FilesDone represents the number of files done
                         format: int64
                         type: integer
-                      percentage:
-                        description: Percentage can be calculated by controller or
-                          client (UploadedBytes / TotalBytes * 100)
+                      percentDone:
+                        description: PercentDone represents the percentage of the
+                          backup/restore that has been completed
                         type: string
-                      totalBytes:
+                      secondsElapsed:
+                        description: SecondsElapsed represents the seconds elapsed
                         format: int64
                         type: integer
+                      speed:
+                        description: Speed represents the transfer speed during the
+                          backup
+                        type: string
+                      total:
+                        description: Total represents the total amount of data that
+                          needs to be transferred during the backup
+                        type: string
+                      totalFiles:
+                        description: TotalFiles represents the total number of files
+                          that need to be transferred during the backup/restore
+                        format: int64
+                        type: integer
+                      transferDone:
+                        description: TransferDone represents the amount of data has
+                          been transferred
+                        type: string
                     type: object
                   repository:
                     description: Repository is the Restic repository path/url where

@@ -77,7 +77,7 @@ See [Getting Started](https://github.com/topolvm/topolvm/blob/topolvm-chart-v16.
 | lvmd.managed | bool | `true` | If true, set up lvmd service with DaemonSet. |
 | lvmd.metrics.annotations | object | `{"prometheus.io/port":"metrics"}` | Annotations for Scrape used by Prometheus. |
 | lvmd.metrics.enabled | bool | `true` | If true, enable scraping of metrics by Prometheus. |
-| lvmd.nodeSelector | object | `{}` | Specify nodeSelector. # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/ |
+| lvmd.nodeSelector | object | `{"topolvm.io/enabled":"true"}` | Specify nodeSelector. # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/ |
 | lvmd.podLabels | object | `{}` | Additional labels to be set on the lvmd service pods. |
 | lvmd.priorityClassName | string | `nil` | Specify priorityClassName. |
 | lvmd.profiling.bindAddress | string | `""` | Enables pprof profiling server. If empty, profiling is disabled. |
@@ -105,7 +105,7 @@ See [Getting Started](https://github.com/topolvm/topolvm/blob/topolvm-chart-v16.
 | node.lvmdSocket | string | `"/run/topolvm/lvmd.sock"` | Specify the socket to be used for communication with lvmd. |
 | node.metrics.annotations | object | `{"prometheus.io/port":"metrics"}` | Annotations for Scrape used by Prometheus. |
 | node.metrics.enabled | bool | `true` | If true, enable scraping of metrics by Prometheus. |
-| node.nodeSelector | object | `{}` | Specify nodeSelector. # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/ |
+| node.nodeSelector | object | `{"topolvm.io/enabled":"true"}` | Specify nodeSelector. # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/ |
 | node.podLabels | object | `{}` | Additional labels to be set on the node pods. |
 | node.podSecurityContext | object | `{}` | Pod securityContext. # ref: https://kubernetes.io/docs/tasks/configure-pod-container/security-context/ |
 | node.priorityClassName | string | `nil` | Specify priorityClassName. |
