@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"time"
 
+	v1 "github.com/topolvm/topolvm/api/v1"
 	"gomodules.xyz/restic"
 	"k8s.io/klog/v2"
 )
@@ -54,15 +55,22 @@ func (pg *Progress) pollAndSetStatus(repo string) {
 			fmt.Println("########### Tick Called for repo:", repo)
 			status, next, err := pg.latestStatus(repo, cursor)
 			if err != nil {
-				klog.Infoln("error getting backup progress for repo", repo, err)
+				klog.Infoln("error getting progress for repo", repo, err)
 				continue
 			}
 			fmt.Println("########## Status:", status)
 			if status == nil {
 				continue
 			}
-			if err := pg.setBackupProgress(repo, status); err != nil {
-				klog.Infoln("error setting backup progress for repo", repo, err)
+			var setErr error
+			switch pg.operationType {
+			case v1.OperationRestore:
+				setErr = pg.setRestoreProgress(repo, status)
+			default:
+				setErr = pg.setBackupProgress(repo, status)
+			}
+			if setErr != nil {
+				klog.Infoln("error setting progress for repo", repo, setErr)
 			}
 
 			cursor = next

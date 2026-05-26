@@ -26,22 +26,24 @@ import (
 )
 
 type Progress struct {
-	kbClient   client.Client
-	wg         sync.WaitGroup
-	ctx        context.Context
-	logicalVol *v1.LogicalVolume
-	cancel     context.CancelFunc
-	wrapper    *restic.ResticWrapper
+	kbClient      client.Client
+	wg            sync.WaitGroup
+	ctx           context.Context
+	logicalVol    *v1.LogicalVolume
+	cancel        context.CancelFunc
+	wrapper       *restic.ResticWrapper
+	operationType v1.OperationType
 }
 
-func NewProgressReporter(kClient client.Client, wrapper *restic.ResticWrapper, lv *v1.LogicalVolume) *Progress {
+func NewProgressReporter(kClient client.Client, wrapper *restic.ResticWrapper, lv *v1.LogicalVolume, opType v1.OperationType) *Progress {
 	ctx, cancel := context.WithCancel(context.Background())
 	pgTyp := &Progress{
-		logicalVol: lv,
-		ctx:        ctx,
-		cancel:     cancel,
-		kbClient:   kClient,
-		wrapper:    wrapper,
+		logicalVol:    lv,
+		ctx:           ctx,
+		cancel:        cancel,
+		kbClient:      kClient,
+		wrapper:       wrapper,
+		operationType: opType,
 	}
 	return pgTyp
 }

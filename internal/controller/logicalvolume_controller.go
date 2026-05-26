@@ -260,6 +260,8 @@ func (r *LogicalVolumeReconciler) handleDeletion(ctx context.Context, lv *topolv
 		return r.deletionWithSnapshot(ctx, lv, log)
 	}
 
+	fmt.Println("########### Pass Before Deletion Without Snapshot")
+
 	return r.deletionWithoutSnapshot(ctx, lv, log)
 }
 
@@ -312,6 +314,7 @@ func (r *LogicalVolumeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (r *LogicalVolumeReconciler) removeLVIfExists(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) error {
+	fmt.Println("################## REmode LV called")
 	// Finalizer's process ( RemoveLV then removeString ) is not atomic,
 	// so checking existence of LV to ensure its idempotence
 	_, err := r.lvService.RemoveLV(ctx, &proto.RemoveLVRequest{Name: string(lv.UID), DeviceClass: lv.Spec.DeviceClass})
