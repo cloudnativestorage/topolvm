@@ -80,7 +80,7 @@ func (r *resticProvider) Backup(ctx context.Context, param *BackupParam) (*Backu
 		Args:        param.Args,
 	}
 	fmt.Println("######################### Running with Progress Reporter")
-	progressRptr := progress.NewProgressReporter(r.client, r.wrapper, r.logiclVol)
+	progressRptr := progress.NewProgressReporter(r.client, r.wrapper, r.logiclVol, v1.OperationBackup)
 	progressRptr.Start()
 	defer progressRptr.Stop()
 
@@ -105,6 +105,11 @@ func (r *resticProvider) Restore(ctx context.Context, param *RestoreParam) (*Res
 		Include: param.Include,
 		Args:    param.Args,
 	}
+
+	fmt.Println("######################### Running Restore with Progress Reporter")
+	progressRptr := progress.NewProgressReporter(r.client, r.wrapper, r.logiclVol, v1.OperationRestore)
+	progressRptr.Start()
+	defer progressRptr.Stop()
 
 	out, err := r.wrapper.RunRestore(param.Repo.Name, restoreOpt)
 	if err != nil {

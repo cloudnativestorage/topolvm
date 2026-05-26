@@ -98,6 +98,7 @@ func (opt *RestoreOptions) setStatusRunning(ctx context.Context) error {
 
 	opt.logicalVol.Status.Snapshot.StartTime = metav1.Now()
 	opt.logicalVol.Status.Snapshot.Phase = topolvmv1.OperationPhaseRunning
+	opt.logicalVol.Status.Snapshot.Operation = topolvmv1.OperationRestore
 	opt.logicalVol.Status.Snapshot.Message = "Restore execution in progress"
 	if err := opt.client.Status().Update(ctx, opt.logicalVol); err != nil {
 		return fmt.Errorf("failed to update online snapshot status: %w", err)

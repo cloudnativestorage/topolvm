@@ -39,6 +39,35 @@ func (pg *Progress) setBackupProgress(_ string, status *restic.ResticStatus) err
 	if status.PercentDone*100 > 0 {
 		progress.PercentDone = fmt.Sprintf("%.2f%%", status.PercentDone*100)
 	}
+	if status.SecondsElapsed > 0 {
+		progress.Speed = units.HumanSize(float64(status.BytesDone) / float64(status.SecondsElapsed)) + "/s"
+	}
+
+	if err := pg.updateLogicalVolumeSnapshotStatus(progress); err != nil {
+		return fmt.Errorf("failed to update logical volume snapshot status: %w", err)
+	}
+
+	return nil
+}
+
+func (pg *Progress) setRestoreProgress(_ string, status *restic.ResticStatus) error {
+	progress := &v1.OperationProgress{
+		SecondsElapsed: status.SecondsElapsed,
+		TotalFiles:     int64(status.TotalFiles),
+		TransferDone:   units.HumanSize(float64(status.BytesRestored)),
+	}
+	if status.TotalBytes > 0 {
+		progress.Total = units.HumanSize(float64(status.TotalBytes))
+	}
+	if status.PercentDone*100 > 0 {
+		progress.PercentDone = fmt.Sprintf("%.2f%%", status.PercentDone*100)
+	}
+	if status.TotalFiles > 0 && status.PercentDone > 0 {
+		progress.FilesDone = int64(float64(status.TotalFiles) * status.PercentDone)
+	}
+	if status.SecondsElapsed > 0 {
+		progress.Speed = units.HumanSize(float64(status.BytesRestored) / float64(status.SecondsElapsed)) + "/s"
+	}
 
 	if err := pg.updateLogicalVolumeSnapshotStatus(progress); err != nil {
 		return fmt.Errorf("failed to update logical volume snapshot status: %w", err)
