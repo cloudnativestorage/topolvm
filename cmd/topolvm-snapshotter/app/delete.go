@@ -98,8 +98,7 @@ func (opt *DeleteOptions) performDelete(ctx context.Context) error {
 
 func (opt *DeleteOptions) executeDelete(ctx context.Context) error {
 	params := opt.buildDeleteParams()
-	pvider, err := getProvider(opt.client, opt.log,
-		opt.snapshotStorage, params.Repo,opt.logicalVol)
+	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo, opt.logicalVol)
 	if err != nil {
 		return fmt.Errorf("failed to initialize delete provider: %w", err)
 	}

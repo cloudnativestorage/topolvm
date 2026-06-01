@@ -40,7 +40,7 @@ func (pg *Progress) setBackupProgress(_ string, status *restic.ResticStatus) err
 		progress.PercentDone = fmt.Sprintf("%.2f%%", status.PercentDone*100)
 	}
 	if status.SecondsElapsed > 0 {
-		progress.Speed = units.HumanSize(float64(status.BytesDone) / float64(status.SecondsElapsed)) + "/s"
+		progress.Speed = units.HumanSize(float64(status.BytesDone)/float64(status.SecondsElapsed)) + "/s"
 	}
 
 	if err := pg.updateLogicalVolumeSnapshotStatus(progress); err != nil {
@@ -66,7 +66,7 @@ func (pg *Progress) setRestoreProgress(_ string, status *restic.ResticStatus) er
 		progress.FilesDone = int64(float64(status.TotalFiles) * status.PercentDone)
 	}
 	if status.SecondsElapsed > 0 {
-		progress.Speed = units.HumanSize(float64(status.BytesRestored) / float64(status.SecondsElapsed)) + "/s"
+		progress.Speed = units.HumanSize(float64(status.BytesRestored)/float64(status.SecondsElapsed)) + "/s"
 	}
 
 	if err := pg.updateLogicalVolumeSnapshotStatus(progress); err != nil {

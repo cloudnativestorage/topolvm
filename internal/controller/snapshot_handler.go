@@ -40,7 +40,7 @@ func newSnapshotHandler(r *LogicalVolumeReconciler) *snapshotHandler {
 	}
 }
 
-func (h *snapshotHandler) buildSnapshotContext(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) error {
+func (h *snapshotHandler) buildSnapshotContextFrRestore(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) error {
 	sourceLV, err := h.getSourceLV(ctx, lv)
 	if err != nil {
 		log.Error(err, "failed to get source snapshot LV", "name", lv.Name)
@@ -157,7 +157,7 @@ func (h *snapshotHandler) backupSnapshot(ctx context.Context, log logr.Logger, l
 	}
 
 	// Mount the logical volume with read-only and no-recovery options
-	mountOptions := []string{"ro", "norecovery"}
+	mountOptions := []string{"ro", "norecovery", "nouuid"}
 	mountResponse, err := h.mountLogicalVolume(ctx, log, lv, mountOptions, topolvmv1.OperationBackup)
 	if err == nil {
 		snapshotExecutor := executor.NewSnapshotBackupExecutor(h.client, lv, mountResponse, h.vsContent, h.vsClass)
