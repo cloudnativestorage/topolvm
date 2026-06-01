@@ -155,6 +155,17 @@ func (opt *RestoreOptions) setStatusSuccess(ctx context.Context, result *provide
 	lv.Status.Snapshot.Version = result.Provider
 	lv.Status.Snapshot.Error = nil
 	lv.Status.Snapshot.Repository = result.Repository
+
+	// Update progress status
+	progress := &topolvmv1.OperationProgress{
+		PercentDone: fmt.Sprintf("%.2f%%", float64(100)),
+	}
+	if lv.Status.Snapshot.Progress != nil {
+		progress.Total = lv.Status.Snapshot.Progress.Total
+		progress.Speed = lv.Status.Snapshot.Progress.Speed
+	}
+
+	lv.Status.Snapshot.Progress = progress
 	if err := opt.client.Status().Update(ctx, lv); err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
 	}
@@ -171,7 +182,7 @@ func (opt *RestoreOptions) executeRestore(ctx context.Context) (*provider.Restor
 		"exclude", params.Exclude,
 		"args", params.Args)
 
-	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo,opt.logicalVol)
+	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo, opt.logicalVol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize restore provider: %w", err)
 	}

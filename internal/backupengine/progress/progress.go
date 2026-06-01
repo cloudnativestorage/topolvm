@@ -80,9 +80,6 @@ func (pg *Progress) pollAndSetStatus(repo string) {
 
 func (pg *Progress) latestStatus(repo string, since int) (*restic.ResticStatus, int, error) {
 	length, statuses, err := pg.wrapper.StatusSince(repo, since)
-	fmt.Println("########## LEngth:", length)
-	fmt.Println("########## Statuses:", statuses)
-	fmt.Println(" ########### ERr:",err)
 	if err != nil {
 		return nil, since, err
 	}

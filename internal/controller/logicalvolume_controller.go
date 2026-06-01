@@ -45,7 +45,6 @@ func NewLogicalVolumeReconcilerWithServices(client client.Client, nodeName strin
 		lvService: lvService,
 		lvMount:   mounter.NewLVMount(client, vgService, lvService),
 	}
-	r.snapshot = newSnapshotHandler(r)
 	return r
 }
 
@@ -66,6 +65,7 @@ func (r *LogicalVolumeReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, nil
 	}
 
+	r.snapshot = newSnapshotHandler(r)
 	// Check for pending deletion annotation
 	if isPendingDeletion(lv) {
 		if controllerutil.ContainsFinalizer(lv, topolvm.GetLogicalVolumeFinalizer()) {
@@ -92,7 +92,7 @@ func (r *LogicalVolumeReconciler) reconcile(ctx context.Context, lv *topolvmv1.L
 	}
 
 	// Prepare snapshot context
-	if err := r.snapshot.buildSnapshotContext(ctx, log, lv); err != nil {
+	if err := r.snapshot.buildSnapshotContextFrRestore(ctx, log, lv); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to build snapshot context: %w", err)
 	}
 	if lv.Status.VolumeID == "" {
@@ -260,8 +260,6 @@ func (r *LogicalVolumeReconciler) handleDeletion(ctx context.Context, lv *topolv
 		return r.deletionWithSnapshot(ctx, lv, log)
 	}
 
-	fmt.Println("########### Pass Before Deletion Without Snapshot")
-
 	return r.deletionWithoutSnapshot(ctx, lv, log)
 }
 
@@ -314,7 +312,6 @@ func (r *LogicalVolumeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func (r *LogicalVolumeReconciler) removeLVIfExists(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) error {
-	fmt.Println("################## REmode LV called")
 	// Finalizer's process ( RemoveLV then removeString ) is not atomic,
 	// so checking existence of LV to ensure its idempotence
 	_, err := r.lvService.RemoveLV(ctx, &proto.RemoveLVRequest{Name: string(lv.UID), DeviceClass: lv.Spec.DeviceClass})

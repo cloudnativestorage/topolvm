@@ -17,6 +17,7 @@ limitations under the License.
 package restic
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -57,9 +58,11 @@ func (w *ResticWrapper) runRestore(repository string, restoreOptions RestoreOpti
 				includes:    restoreOptions.Include,
 				args:        restoreOptions.Args,
 			}
-			if _, err := w.restore(repository, params); err != nil {
+			out, err := w.restore(repository, params)
+			if err != nil {
 				return err
 			}
+			fmt.Println("### Output:", string(out))
 		}
 	} else if len(restoreOptions.RestorePaths) != 0 {
 		for _, path := range restoreOptions.RestorePaths {
@@ -71,9 +74,11 @@ func (w *ResticWrapper) runRestore(repository string, restoreOptions RestoreOpti
 				includes:    restoreOptions.Include,
 				args:        restoreOptions.Args,
 			}
-			if _, err := w.restore(repository, params); err != nil {
+			out, err := w.restore(repository, params)
+			if err != nil {
 				return err
 			}
+			fmt.Println("### Output:", string(out))
 		}
 	}
 	return nil

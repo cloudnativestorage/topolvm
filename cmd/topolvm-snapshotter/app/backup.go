@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	_ "github.com/docker/go-units"
 	"github.com/go-logr/logr"
 	"github.com/spf13/cobra"
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
@@ -170,7 +171,7 @@ func (opt *BackupOptions) executeBackup(ctx context.Context) (*provider.BackupRe
 		"repo-name", params.Repo.Name, "repo-path", params.Repo.Path,
 		"backup-paths", params.BackupPaths, "exclude", params.Exclude, "args", params.Args,
 	)
-	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo,opt.logicalVol)
+	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo, opt.logicalVol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize backup provider: %w", err)
 	}
@@ -263,6 +264,19 @@ func (opt *BackupOptions) setStatusSuccess(ctx context.Context, result *provider
 	lv.Status.Snapshot.Error = nil
 	lv.Status.Snapshot.Path = result.Path
 	lv.Status.Snapshot.Repository = result.Repository
+
+	// Update progress status
+	progress := &topolvmv1.OperationProgress{
+		PercentDone:  fmt.Sprintf("%.2f%%", float64(100)),
+		TotalFiles:   result.Files.Total,
+		Total:        result.Size.TotalFormatted,
+		TransferDone: result.Size.TotalFormatted,
+	}
+	if lv.Status.Snapshot.Progress != nil {
+		progress.Speed = lv.Status.Snapshot.Progress.Speed
+	}
+
+	lv.Status.Snapshot.Progress = progress
 	if err := opt.client.Status().Update(ctx, lv); err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
 	}
