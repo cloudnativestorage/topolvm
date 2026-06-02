@@ -260,16 +260,16 @@ func (r *LogicalVolumeReconciler) handleDeletion(ctx context.Context, lv *topolv
 		return r.deletionWithSnapshot(ctx, lv, log)
 	}
 
-
-	yes, err := isLVBackupCandidate(ctx, log, r.snapshot, lv)
+	// The snapshot operation is still in progress: delete the executor pod
+	// first so it stops holding the LV open, then unmount, then `lvremove`.
+	op, ok, err := r.snapshotOperationToCleanUp(ctx, log, lv)
 	if err != nil {
-		log.Error(err, "failed to determine if LV is a snapshot", "name", lv.Name)
-		return ctrl.Result{}, fmt.Errorf("failed to determine if LV is a snapshot: %w", err)
+		log.Error(err, "failed to determine snapshot operation to clean up", "name", lv.Name)
+		return ctrl.Result{}, err
 	}
-	if yes { // Means, Deletion called before the backup complete
-		requeue, err := r.deleteBackupPodAndUnMount(ctx, lv, log)
+	if ok {
+		requeue, err := r.deleteSnapshotPodAndUnMount(ctx, lv, log, op)
 		if err != nil {
-			log.Error(err, "failed to delete backup pod", "name", lv.Name)
 			return ctrl.Result{}, err
 		}
 		if requeue {
@@ -299,14 +299,31 @@ func (r *LogicalVolumeReconciler) deletionWithSnapshot(ctx context.Context, lv *
 	return ctrl.Result{}, nil
 }
 
-func (r *LogicalVolumeReconciler) deleteBackupPodAndUnMount(ctx context.Context, lv *topolvmv1.LogicalVolume, log logr.Logger) (bool, error) {
-	log.Info("logical volume is a backup candidate, proceeding with snapshot deletion flow", "name", lv.Name)
-	requeue, err := r.snapshot.deleteRunningBackupPod(ctx, log, lv)
+// snapshotOperationToCleanUp returns the snapshot operation (Backup or
+// Restore) whose executor pod may still be holding the LV, and true when
+// the LV is in the middle of that operation. Backup and restore are
+// mutually exclusive for a given LV.
+func (r *LogicalVolumeReconciler) snapshotOperationToCleanUp(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) (topolvmv1.OperationType, bool, error) {
+	if yes, err := isLVBackupCandidate(ctx, log, r.snapshot, lv); err != nil {
+		return "", false, err
+	} else if yes {
+		return topolvmv1.OperationBackup, true, nil
+	}
+	if yes, err := isLVRestoreCandidate(ctx, log, r.snapshot, lv); err != nil {
+		return "", false, err
+	} else if yes {
+		return topolvmv1.OperationRestore, true, nil
+	}
+	return "", false, nil
+}
+
+func (r *LogicalVolumeReconciler) deleteSnapshotPodAndUnMount(ctx context.Context, lv *topolvmv1.LogicalVolume, log logr.Logger, operation topolvmv1.OperationType) (bool, error) {
+	log.Info("LV has an in-progress snapshot operation, deleting pod first", "name", lv.Name, "operation", operation)
+	requeue, err := r.snapshot.deleteRunningSnapshotPod(ctx, log, lv, operation)
 	if err != nil {
 		return false, err
 	}
 	if requeue {
-		log.Info("deleted running backup pod before LV removal", "name", lv.Name)
 		return true, nil
 	}
 	if err := r.lvMount.Unmount(ctx, lv); err != nil {

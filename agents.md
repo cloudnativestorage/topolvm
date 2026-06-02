@@ -71,39 +71,50 @@ Implemented across two files. The deletion dispatch lives in
 `internal/controller/logicalvolume_controller.go` (`handleDeletion`):
 
 ```
-isLVHasSnapshot(lv)      -> deletionWithSnapshot     (snapshot already Succeeded)
-not isLVHasSnapshot      -> isLVBackupCandidate
-    yes                  -> deleteBackupPodAndUnMount (delete pod, then Unmount)
-    no                   -> deletionWithoutSnapshot   (just lvremove + finalizer)
+isLVHasSnapshot(lv)
+    yes -> deletionWithSnapshot                                  (snapshot Succeeded)
+    no  -> snapshotOperationToCleanUp
+              OperationBackup    -> deleteSnapshotPodAndUnMount(B)
+              OperationRestore   -> deleteSnapshotPodAndUnMount(R)
+              none               -> deletionWithoutSnapshot      (just lvremove + finalizer)
 ```
 
-Important: `isLVBackupCandidate` is a real predicate. It calls
-`snapshotHandler.buildSnapshotContextFrBackup`, which is the same function
-the normal reconcile path uses to populate `shouldBackup` from the
-`VolumeSnapshotClass` parameters. Calling only
-`snapshotHandler.setVolumeSnapshotInfo` would leave `shouldBackup` as the
-zero value (`false`), because the deletion path never runs
-`buildSnapshotContextFrBackup` the way `reconcile()` does. Always go
-through `buildSnapshotContextFrBackup` here so the candidate check actually
-reflects the VSClass.
+`handleDeletion` itself stays small. The two predicates
+`isLVBackupCandidate` / `isLVRestoreCandidate` decide which operation is
+in progress; `snapshotOperationToCleanUp` returns the operation
+(or `""` when neither applies) and the same `deleteSnapshotPodAndUnMount`
+helper handles both branches. Backup and restore are mutually exclusive
+for a given LV, so the `if/else if` chain in `snapshotOperationToCleanUp`
+is safe.
 
-`deleteBackupPodAndUnMount` (in `logicalvolume_controller.go`) does:
+Important: `isLVBackupCandidate` and `isLVRestoreCandidate` must call
+`buildSnapshotContextFrBackup` / `buildSnapshotContextFrRestore`
+respectively. Those are the only places that populate the `shouldBackup`
+/ `shouldRestore` flags on `snapshotHandler`. Calling only
+`snapshotHandler.setVolumeSnapshotInfo` would leave the flag at its
+zero value (`false`), because the deletion path never runs the builder
+the way `reconcile()` does. (We hit this once already on the backup
+predicate; see the `isLVBackupCandidate` history.)
 
-1. **Delete the backup pod** (if it exists) and requeue. The kubelet must
-   terminate the container and release the pod's hostPath mount before the
-   device is no longer busy. `deleteRunningBackupPod` (in
-   `snapshot_handler.go`) looks up the pod by its deterministic name and
-   namespace and calls `client.Delete`.
+`deleteSnapshotPodAndUnMount` does:
+
+1. **Delete the executor pod** for the given operation (if it exists) and
+   requeue. The kubelet must terminate the container and release the
+   pod's hostPath mount before the device is no longer busy.
+   `deleteRunningSnapshotPod` (in `snapshot_handler.go`) looks up the
+   pod by its deterministic name and namespace
+   (`executor.BuildSnapshotPodName` / `executor.GetPodNamespace`) and
+   calls `client.Delete`.
 2. **`LVMount.Unmount`** to release the host-side bind mount the
-   controller set up for the backup. `Unmount` is already mostly
-   idempotent (returns nil when the LV is gone or the path is not a
-   mount point), so a reconciler retry after a partial teardown is safe.
+   controller set up. `Unmount` is already mostly idempotent (returns
+   nil when the LV is gone or the path is not a mount point), so a
+   reconciler retry after a partial teardown is safe.
 3. Fall through to `deletionWithoutSnapshot` which does
    `lvService.RemoveLV` (NotFound is treated as success) and
    `removeFinalizer` so the CR can be garbage collected.
 
-The new helpers in the executor package are exported so the controller does
-not have to duplicate the pod-naming convention:
+The new helpers in the executor package are exported so the controller
+does not have to duplicate the pod-naming convention:
 
 - `executor.BuildSnapshotPodName(operation, lv) string`
 - `executor.GetPodNamespace() string`
@@ -157,3 +168,17 @@ existing pod-lookup and idempotency semantics.
   delete executor pods (`restore-...`, `delete-...`). If you ever need to
   tear those down at deletion time as well, the same `BuildSnapshotPodName`
   helper works for all three.
+- The backup-side hang described above had a mirror on the restore side
+  (deleting a PVC while `restore-<lv-name>` is still running also blocks
+  `lvremove`). That mirror was fixed in the same shape as the backup
+  fix: `isLVRestoreCandidate` (using `buildSnapshotContextFrRestore`),
+  `deleteRunningSnapshotPod` parameterised by `topolvmv1.OperationType`,
+  and `handleDeletion` dispatching through `snapshotOperationToCleanUp`.
+  See `prompts/pvc-deletion-during-restore-prompt.md` for the original
+  plan.
+- `buildSnapshotContextFrBackup` and `buildSnapshotContextFrRestore` are
+  the only places that populate the `shouldBackup` / `shouldRestore` flags
+  on `snapshotHandler`. Any new predicate that wants to read those flags
+  must call the corresponding builder; calling only `setVolumeSnapshotInfo`
+  leaves the flag at its zero value. This bit us once already (see
+  `isLVBackupCandidate` history).
