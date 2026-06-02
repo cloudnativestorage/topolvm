@@ -260,6 +260,23 @@ func (r *LogicalVolumeReconciler) handleDeletion(ctx context.Context, lv *topolv
 		return r.deletionWithSnapshot(ctx, lv, log)
 	}
 
+
+	yes, err := isLVBackupCandidate(ctx, log, r.snapshot, lv)
+	if err != nil {
+		log.Error(err, "failed to determine if LV is a snapshot", "name", lv.Name)
+		return ctrl.Result{}, fmt.Errorf("failed to determine if LV is a snapshot: %w", err)
+	}
+	if yes { // Means, Deletion called before the backup complete
+		requeue, err := r.deleteBackupPodAndUnMount(ctx, lv, log)
+		if err != nil {
+			log.Error(err, "failed to delete backup pod", "name", lv.Name)
+			return ctrl.Result{}, err
+		}
+		if requeue {
+			return ctrl.Result{RequeueAfter: requeueIntervalForSimpleUpdate}, nil
+		}
+	}
+
 	return r.deletionWithoutSnapshot(ctx, lv, log)
 }
 
@@ -280,6 +297,23 @@ func (r *LogicalVolumeReconciler) deletionWithSnapshot(ctx context.Context, lv *
 	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *LogicalVolumeReconciler) deleteBackupPodAndUnMount(ctx context.Context, lv *topolvmv1.LogicalVolume, log logr.Logger) (bool, error) {
+	log.Info("logical volume is a backup candidate, proceeding with snapshot deletion flow", "name", lv.Name)
+	requeue, err := r.snapshot.deleteRunningBackupPod(ctx, log, lv)
+	if err != nil {
+		return false, err
+	}
+	if requeue {
+		log.Info("deleted running backup pod before LV removal", "name", lv.Name)
+		return true, nil
+	}
+	if err := r.lvMount.Unmount(ctx, lv); err != nil {
+		log.Error(err, "failed to unmount LV during deletion", "name", lv.Name)
+		return false, err
+	}
+	return false, nil
 }
 
 func (r *LogicalVolumeReconciler) deletionWithoutSnapshot(ctx context.Context, lv *topolvmv1.LogicalVolume, log logr.Logger) (ctrl.Result, error) {
