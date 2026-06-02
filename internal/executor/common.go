@@ -14,7 +14,7 @@ import (
 
 func buildObjectMeta(operation topolvmv1.OperationType, lv *topolvmv1.LogicalVolume) metav1.ObjectMeta {
 	return metav1.ObjectMeta{
-		Name:        fmt.Sprintf("%s-%s", strings.ToLower(string(operation)), lv.Name),
+		Name:        BuildSnapshotPodName(operation, lv),
 		Namespace:   getNamespace(),
 		Labels:      buildLabels(lv),
 		Annotations: buildAnnotations(lv),
@@ -24,7 +24,20 @@ func buildObjectMeta(operation topolvmv1.OperationType, lv *topolvmv1.LogicalVol
 	}
 }
 
+// BuildSnapshotPodName returns the deterministic name used for the snapshot
+// executor pod (backup, restore, or delete) that targets the given LV.
+// Example: BuildSnapshotPodName(OperationBackup, lv) -> "backup-<lv.Name>".
+func BuildSnapshotPodName(operation topolvmv1.OperationType, lv *topolvmv1.LogicalVolume) string {
+	return fmt.Sprintf("%s-%s", strings.ToLower(string(operation)), lv.Name)
+}
+
 func getNamespace() string {
+	return GetPodNamespace()
+}
+
+// GetPodNamespace returns the namespace in which snapshot executor pods run.
+// It reads the HOST_NAMESPACE env var and falls back to "topolvm-system".
+func GetPodNamespace() string {
 	namespace := os.Getenv(EnvHostNamespace)
 	if namespace == "" {
 		namespace = "topolvm-system"

@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -214,6 +215,29 @@ func (h *snapshotHandler) executeCleanerOperation(ctx context.Context, log logr.
 	log.Info("successfully executed cleaner operation for LogicalVolume", "name", lv.Name)
 
 	return nil
+}
+
+func (h *snapshotHandler) deleteRunningBackupPod(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) (bool, error) {
+	podName := executor.BuildSnapshotPodName(topolvmv1.OperationBackup, lv)
+	namespace := executor.GetPodNamespace()
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      podName,
+			Namespace: namespace,
+		},
+	}
+	if err := h.client.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
+		if apierrs.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to get backup pod %s/%s: %w", namespace, podName, err)
+	}
+	log.Info("deleting running backup pod before LV removal",
+		"name", lv.Name, "pod", podName, "namespace", namespace, "phase", pod.Status.Phase)
+	if err := h.client.Delete(ctx, pod); err != nil && !apierrs.IsNotFound(err) {
+		return false, fmt.Errorf("failed to delete backup pod %s/%s: %w", namespace, podName, err)
+	}
+	return true, nil
 }
 
 func (h *snapshotHandler) cleanupLVMSnapshotAfterBackup(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) error {
@@ -466,4 +490,11 @@ func isSnapshotOperationComplete(lv *topolvmv1.LogicalVolume) bool {
 	}
 	phase := lv.Status.Snapshot.Phase
 	return phase == topolvmv1.OperationPhaseSucceeded || phase == topolvmv1.OperationPhaseFailed
+}
+
+func isLVBackupCandidate(ctx context.Context, log logr.Logger, snapHandler *snapshotHandler, lv *topolvmv1.LogicalVolume) (bool, error) {
+	if err := snapHandler.buildSnapshotContextFrBackup(ctx, log, lv); err != nil {
+		return false, fmt.Errorf("failed to build snapshot context for backup: %w", err)
+	}
+	return snapHandler.shouldBackup, nil
 }
