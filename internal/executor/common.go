@@ -16,7 +16,7 @@ func buildObjectMeta(operation topolvmv1.OperationType, lv *topolvmv1.LogicalVol
 	return metav1.ObjectMeta{
 		Name:        BuildSnapshotPodName(operation, lv),
 		Namespace:   getNamespace(),
-		Labels:      buildLabels(lv),
+		Labels:      buildLabels(operation, lv),
 		Annotations: buildAnnotations(lv),
 		OwnerReferences: []metav1.OwnerReference{
 			*metav1.NewControllerRef(lv, topolvmv1.GroupVersion.WithKind("LogicalVolume")),
@@ -45,13 +45,13 @@ func GetPodNamespace() string {
 	return namespace
 }
 
-func buildLabels(lv *topolvmv1.LogicalVolume) map[string]string {
+func buildLabels(operation topolvmv1.OperationType, lv *topolvmv1.LogicalVolume) map[string]string {
 	labels := map[string]string{
-		LabelAppKey:           LabelAppValue,
-		LabelLogicalVolumeKey: lv.Name,
-		LabelSnapshotPodKey:   "true",
+		LabelSnapshotPodKey:    "true",
+		LabelLogicalVolumeKey:  lv.Name,
+		LabelAppKey:            LabelAppValue,
+		LabelSnapshotOperationKey: string(operation),
 	}
-
 	return labels
 }
 

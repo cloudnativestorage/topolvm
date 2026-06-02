@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -401,6 +402,45 @@ func (h *snapshotHandler) updateSnapshotOperationStatus(ctx context.Context, lv 
 	}
 
 	// Sync the original object with the latest status
+	lv.Status = freshLV.Status
+	lv.ResourceVersion = freshLV.ResourceVersion
+	return nil
+}
+
+
+func failSnapshotOperation(ctx context.Context, c client.Client, lv *topolvmv1.LogicalVolume, operation topolvmv1.OperationType, message string) error {
+	freshLV := &topolvmv1.LogicalVolume{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(lv), freshLV); err != nil {
+		return fmt.Errorf("failed to get latest LogicalVolume: %w", err)
+	}
+	// Re-check after the Get: the snapshotter may have written
+	// Succeeded in the meantime, or the LV controller may have changed
+	// the operation out from under us.
+	if freshLV.Status.Snapshot == nil || freshLV.Status.Snapshot.Operation != operation {
+		return nil
+	}
+	if isSnapshotOperationComplete(freshLV) {
+		return nil
+	}
+
+	meta.SetStatusCondition(&freshLV.Status.Conditions, metav1.Condition{
+		Type:    topolvmv1.TypeSnapshotExecutorPodMissing,
+		Status:  metav1.ConditionTrue,
+		Reason:  topolvmv1.ReasonExecutorPodMissing,
+		Message: message,
+	})
+	freshLV.Status.Snapshot.Operation = operation
+	freshLV.Status.Snapshot.Phase = topolvmv1.OperationPhaseFailed
+	freshLV.Status.Snapshot.Message = message
+	freshLV.Status.Snapshot.Error = &topolvmv1.SnapshotError{
+		Code:    topolvmv1.ReasonExecutorPodMissing,
+		Message: message,
+	}
+
+	if err := c.Status().Update(ctx, freshLV); err != nil {
+		return fmt.Errorf("failed to update snapshot status: %w", err)
+	}
+
 	lv.Status = freshLV.Status
 	lv.ResourceVersion = freshLV.ResourceVersion
 	return nil

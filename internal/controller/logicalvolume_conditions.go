@@ -135,6 +135,10 @@ func hasSnapshotDeleteExecutorCondition(lv *topolvmv1.LogicalVolume) bool {
 		meta.IsStatusConditionTrue(lv.Status.Conditions, topolvmv1.TypeSnapshotDeleteExecutorEnsured)
 }
 
+func hasSnapshotExecutorPodMissing(lv *topolvmv1.LogicalVolume) bool {
+	return meta.IsStatusConditionTrue(lv.Status.Conditions, topolvmv1.TypeSnapshotExecutorPodMissing)
+}
+
 func hasConditionSnapshotDeleteSucceeded(lv *topolvmv1.LogicalVolume) bool {
 	for _, condition := range lv.Status.Conditions {
 		if condition.Type == topolvmv1.TypeSnapshotDeleteEnsured &&

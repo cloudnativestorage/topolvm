@@ -45,6 +45,24 @@ func TestBuildSnapshotPodName(t *testing.T) {
 	}
 }
 
+func TestBuildLabelsIncludesOperation(t *testing.T) {
+	lv := &topolvmv1.LogicalVolume{ObjectMeta: metav1.ObjectMeta{Name: "my-lv"}}
+	labels := buildLabels(topolvmv1.OperationRestore, lv)
+
+	if labels[LabelAppKey] != LabelAppValue {
+		t.Errorf("LabelApp = %q, want %q", labels[LabelAppKey], LabelAppValue)
+	}
+	if labels[LabelLogicalVolumeKey] != "my-lv" {
+		t.Errorf("LabelLogicalVolume = %q, want %q", labels[LabelLogicalVolumeKey], "my-lv")
+	}
+	if labels[LabelSnapshotPodKey] != "true" {
+		t.Errorf("LabelSnapshotPod = %q, want %q", labels[LabelSnapshotPodKey], "true")
+	}
+	if labels[LabelSnapshotOperationKey] != string(topolvmv1.OperationRestore) {
+		t.Errorf("LabelSnapshotOperation = %q, want %q", labels[LabelSnapshotOperationKey], topolvmv1.OperationRestore)
+	}
+}
+
 func TestGetPodNamespaceDefaultsToTopolvmSystem(t *testing.T) {
 	t.Setenv(EnvHostNamespace, "")
 	if got := GetPodNamespace(); got != "topolvm-system" {
@@ -58,3 +76,4 @@ func TestGetPodNamespaceHonorsEnv(t *testing.T) {
 		t.Errorf("GetPodNamespace() with env set = %q, want %q", got, "custom-ns")
 	}
 }
+

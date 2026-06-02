@@ -40,6 +40,12 @@ const (
 	// LabelSnapshotPodKey is the label key to identify snapshot pods
 	LabelSnapshotPodKey = "topolvm.io/snapshot-pod"
 
+	// LabelSnapshotOperationKey is the label key for the snapshot
+	// operation the pod is running (Backup / Restore / Delete). The
+	// SnapshotPodReconciler reads this to know which operation to fail
+	// out when the pod disappears.
+	LabelSnapshotOperationKey = "topolvm.io/snapshot-operation"
+
 	// EnvHostNamespace is the environment variable key for the host namespace
 	EnvHostNamespace = "HOST_NAMESPACE"
 

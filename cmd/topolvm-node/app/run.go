@@ -126,6 +126,11 @@ func subMain(ctx context.Context) error {
 		setupLog.Error(err, "unable to create controller", "controller", "LogicalVolume")
 		return err
 	}
+
+	if err := controller.SetupSnapshotPodReconciler(mgr, client); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SnapshotPod")
+		return err
+	}
 	//+kubebuilder:scaffold:builder
 
 	// Add health checker to manager

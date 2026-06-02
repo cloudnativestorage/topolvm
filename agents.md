@@ -182,3 +182,18 @@ existing pod-lookup and idempotency semantics.
   must call the corresponding builder; calling only `setVolumeSnapshotInfo`
   leaves the flag at its zero value. This bit us once already (see
   `isLVBackupCandidate` history).
+- The `SnapshotPodReconciler` (in
+  `internal/controller/snapshot_pod_controller.go`) is a separate
+  controller that watches `corev1.Pod` filtered by
+  `topolvm.io/snapshot-pod=true` and flips the owning LV's
+  `Status.Snapshot.Phase` to `Failed` (with
+  `Error.Code = "SnapshotExecutorPodMissing"`) when the pod is
+  deleted or transitions to `PodFailed`. The LV controller's existing
+  `For(&LogicalVolume{})` watch then picks up the status update and
+  runs the normal cleanup path. Purely event-driven (no periodic
+  requeue) so a multi-TB backup does not pay a per-tick API cost. The
+  executor pods now carry a `topolvm.io/snapshot-operation` label
+  (`Backup` / `Restore` / `Delete`) so the reconciler knows which
+  operation to fail out without having to fetch the LV first. See
+  `prompts/backup-restore-pod-deletion.md` for the original design
+  notes.
