@@ -217,8 +217,16 @@ func (h *snapshotHandler) executeCleanerOperation(ctx context.Context, log logr.
 	return nil
 }
 
-func (h *snapshotHandler) deleteRunningBackupPod(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) (bool, error) {
-	podName := executor.BuildSnapshotPodName(topolvmv1.OperationBackup, lv)
+// deleteRunningSnapshotPod deletes the snapshot executor pod (if any) for the
+// given LogicalVolume and operation (Backup, Restore, or Delete) and reports
+// whether a requeue is required to wait for the pod to terminate. The pod
+// mounts the LV via hostPath, which keeps the underlying device open and
+// prevents `lvremove` from succeeding. The kubelet only releases the pod's
+// hostPath mount after the pod has terminated, so the controller must delete
+// the pod first and requeue to let the termination complete before
+// unmounting and removing the LV.
+func (h *snapshotHandler) deleteRunningSnapshotPod(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume, operation topolvmv1.OperationType) (bool, error) {
+	podName := executor.BuildSnapshotPodName(operation, lv)
 	namespace := executor.GetPodNamespace()
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -230,12 +238,12 @@ func (h *snapshotHandler) deleteRunningBackupPod(ctx context.Context, log logr.L
 		if apierrs.IsNotFound(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("failed to get backup pod %s/%s: %w", namespace, podName, err)
+		return false, fmt.Errorf("failed to get %s pod %s/%s: %w", operation, namespace, podName, err)
 	}
-	log.Info("deleting running backup pod before LV removal",
-		"name", lv.Name, "pod", podName, "namespace", namespace, "phase", pod.Status.Phase)
+	log.Info("deleting running snapshot pod before LV removal",
+		"name", lv.Name, "pod", podName, "namespace", namespace, "operation", operation, "phase", pod.Status.Phase)
 	if err := h.client.Delete(ctx, pod); err != nil && !apierrs.IsNotFound(err) {
-		return false, fmt.Errorf("failed to delete backup pod %s/%s: %w", namespace, podName, err)
+		return false, fmt.Errorf("failed to delete %s pod %s/%s: %w", operation, namespace, podName, err)
 	}
 	return true, nil
 }
@@ -497,4 +505,11 @@ func isLVBackupCandidate(ctx context.Context, log logr.Logger, snapHandler *snap
 		return false, fmt.Errorf("failed to build snapshot context for backup: %w", err)
 	}
 	return snapHandler.shouldBackup, nil
+}
+
+func isLVRestoreCandidate(ctx context.Context, log logr.Logger, snapHandler *snapshotHandler, lv *topolvmv1.LogicalVolume) (bool, error) {
+	if err := snapHandler.buildSnapshotContextFrRestore(ctx, log, lv); err != nil {
+		return false, fmt.Errorf("failed to build snapshot context for restore: %w", err)
+	}
+	return snapHandler.shouldRestore, nil
 }
