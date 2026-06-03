@@ -139,16 +139,6 @@ func (c *wrappedClient) List(ctx context.Context, list client.ObjectList, opts .
 	return c.reader.List(ctx, list, opts...)
 }
 
-func (c *wrappedClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
-	// We're not using Apply currently, so we can safely return an error here.
-	// In addition, as of controller-runtime v0.22.4, we can't implement Apply
-	// completely. To do so, we need to detect whether obj is
-	// client.unstructuredApplyConfiguration, which is returned by
-	// client.ApplyConfigurationFromUnstructured, and modify its GVK. However,
-	// this type isn't exported in client package, so we can't do that.
-	return fmt.Errorf("wrappedClient.Apply is not implemented")
-}
-
 func (c *wrappedClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	switch o := obj.(type) {
@@ -455,7 +445,7 @@ func (c *wrappedSubResourceClient) Patch(ctx context.Context, obj client.Object,
 	return sc.Patch(ctx, obj, patch, opts...)
 }
 
-func (c *wrappedSubResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+func (c *wrappedSubResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 	// We're not using SubResource Apply currently, so we can safely return an error here.
 	return fmt.Errorf("wrappedSubResourceClient.Apply is not implemented")
 }
