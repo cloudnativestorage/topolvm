@@ -157,6 +157,7 @@ spec:
             - /csi-provisioner
             - --csi-address=/run/topolvm/csi-topolvm.sock
             - --feature-gates=Topology=true
+            - --retry-interval-max=20s
             {{- if .Values.controller.leaderElection.enabled }}
             - --leader-election
             - --leader-election-namespace={{ .Release.Namespace }}
@@ -243,6 +244,7 @@ spec:
           command:
             - /csi-snapshotter
             - --csi-address=/run/topolvm/csi-topolvm.sock
+            - --retry-interval-max=20s
             {{- if .Values.controller.leaderElection.enabled }}
             - --leader-election
             - --leader-election-namespace={{ .Release.Namespace }}
