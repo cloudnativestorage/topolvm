@@ -107,7 +107,7 @@ const (
 // condition; the LV controller then runs the normal cleanup path.
 const (
 	TypeSnapshotExecutorPodMissing = "SnapshotExecutorPodMissing"
-	ReasonExecutorPodMissing      = "ExecutorPodMissing"
+	ReasonExecutorPodMissing       = "ExecutorPodMissing"
 )
 
 // Condition types for cleaning a LogicalVolume status

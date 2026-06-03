@@ -76,4 +76,3 @@ func TestGetPodNamespaceHonorsEnv(t *testing.T) {
 		t.Errorf("GetPodNamespace() with env set = %q, want %q", got, "custom-ns")
 	}
 }
-

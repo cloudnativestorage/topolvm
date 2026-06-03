@@ -47,10 +47,10 @@ func GetPodNamespace() string {
 
 func buildLabels(operation topolvmv1.OperationType, lv *topolvmv1.LogicalVolume) map[string]string {
 	labels := map[string]string{
-		LabelSnapshotPodKey:    "true",
-		LabelLogicalVolumeKey:  lv.Name,
-		LabelAppKey:            LabelAppValue,
+		LabelSnapshotPodKey:       "true",
+		LabelLogicalVolumeKey:     lv.Name,
 		LabelSnapshotOperationKey: string(operation),
+		LabelAppKey:               LabelAppValue,
 	}
 	return labels
 }

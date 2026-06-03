@@ -26,4 +26,3 @@ func SetupSnapshotPodReconciler(mgr ctrl.Manager, client client.Client) error {
 	reconciler := internalController.NewSnapshotPodReconciler(client)
 	return reconciler.SetupWithManager(mgr)
 }
-
