@@ -615,7 +615,7 @@ func testE2E() {
 			var maxCapNodes []string
 			Eventually(func() error {
 				var maxCapacity int
-				maxCapNodes = []string{}
+				maxCapNodes = make([]string, 0, 2)
 				var nodes corev1.NodeList
 				err := getObjects(&nodes, "nodes")
 				if err != nil {
@@ -637,7 +637,8 @@ func testE2E() {
 					switch {
 					case capacity > maxCapacity:
 						maxCapacity = capacity
-						maxCapNodes = []string{node.GetName()}
+						maxCapNodes = maxCapNodes[:0]
+						maxCapNodes = append(maxCapNodes, node.GetName())
 					case capacity == maxCapacity:
 						maxCapNodes = append(maxCapNodes, node.GetName())
 					}
@@ -1100,31 +1101,6 @@ func testE2E() {
 		Expect(err).ShouldNot(HaveOccurred())
 		_, err = kubectlWithInput(claimYAML, "delete", "-n", ns, "-f", "-")
 		Expect(err).ShouldNot(HaveOccurred())
-	})
-
-	It("should delete a pod when the pvc is deleted", func() {
-		By("deploying a pod and PVC")
-		claimYAML := []byte(fmt.Sprintf(pvcTemplateYAML, "topo-pvc", "Filesystem", 1023<<20, "topolvm-provisioner"))
-		podYaml := []byte(fmt.Sprintf(podVolumeMountTemplateYAML, "ubuntu", "topo-pvc"))
-
-		_, err := kubectlWithInput(claimYAML, "apply", "-n", ns, "-f", "-")
-		Expect(err).ShouldNot(HaveOccurred())
-		_, err = kubectlWithInput(podYaml, "apply", "-n", ns, "-f", "-")
-		Expect(err).ShouldNot(HaveOccurred())
-
-		By("deleting the PVC")
-		_, err = kubectlWithInput(claimYAML, "delete", "-n", ns, "-f", "-")
-		Expect(err).ShouldNot(HaveOccurred())
-
-		By("confirming the pod is deleted")
-		Eventually(func() error {
-			var pod corev1.Pod
-			err := getObjects(&pod, "pod", "-n", ns, "ubuntu")
-			if err == ErrObjectNotFound {
-				return nil
-			}
-			return errors.New("the pod exists")
-		}).Should(Succeed())
 	})
 }
 

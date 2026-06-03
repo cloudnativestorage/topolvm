@@ -43,15 +43,12 @@ run:
 	fi
 	$(KUBECTL) apply -f https://github.com/cert-manager/cert-manager/releases/download/$(CERT_MANAGER_VERSION)/cert-manager.crds.yaml
 	$(KUBECTL) create namespace topolvm-system
-	$(KUBECTL) label namespace topolvm-system $(DOMAIN_NAME)/webhook=ignore
-	$(KUBECTL) label namespace kube-system $(DOMAIN_NAME)/webhook=ignore
 	$(HELM) repo add jetstack https://charts.jetstack.io
 	$(HELM) repo update
 	$(HELM) dependency build ../charts/topolvm/
 	$(HELM) install --namespace=topolvm-system topolvm ../charts/topolvm/ -f $(HELM_VALUES_FILE) $(BUILD_IMAGE_FLAG)
 	$(KUBECTL) wait --for=condition=available --timeout=120s -n topolvm-system deployments/topolvm-controller
 	$(KUBECTL) wait --for=condition=ready --timeout=120s -n topolvm-system -l="app.kubernetes.io/component=controller,app.kubernetes.io/name=topolvm" pod
-	$(KUBECTL) wait --for=condition=ready --timeout=120s -n topolvm-system certificate/topolvm-mutatingwebhook
 	timeout 120 sh -c "until $(KUBECTL) apply -f podpvc.yaml; do sleep 10; done"
 	$(KUBECTL) wait --for=condition=ready --timeout=120s -n default pod -l app=example
 	[ $$($(KUBECTL) get --no-headers=true $(LOGICALVOLUME_GK_NAME) | wc -l) -ne 0 ]

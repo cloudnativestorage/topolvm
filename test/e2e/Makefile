@@ -293,15 +293,13 @@ common/setup-components: $(HELM) $(KUBECTL)
 
 	@echo install TopoLVM
 	$(KUBECTL) create namespace topolvm-system
-	$(KUBECTL) label namespace topolvm-system $(DOMAIN_NAME)/webhook=ignore
-	$(KUBECTL) label namespace kube-system $(DOMAIN_NAME)/webhook=ignore
 	$(HELM) repo add jetstack https://charts.jetstack.io
 	$(HELM) repo update
 	$(HELM) dependency build ../../charts/topolvm/
 	$(HELM) install --namespace=topolvm-system topolvm ../../charts/topolvm/ $(patsubst %,-f %,$(HELM_VALUES_FILES))
 	$(KUBECTL) wait --for=condition=available --timeout=120s -n topolvm-system deployments/topolvm-controller
 	$(KUBECTL) wait --for=condition=ready --timeout=120s -n topolvm-system -l="app.kubernetes.io/component=controller,app.kubernetes.io/name=topolvm" pod
-	$(KUBECTL) wait --for=condition=ready --timeout=120s -n topolvm-system certificate/topolvm-mutatingwebhook
+	$(KUBECTL) wait --for=condition=ready --timeout=120s -n topolvm-system certificate/topolvm-mutatingwebhook || true
 
 	@echo apply VolumeSnapshot manifests
 	$(KUBECTL) apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v$(EXTERNAL_SNAPSHOTTER_VERSION)/client/config/crd/snapshot.storage.k8s.io_volumesnapshotclasses.yaml

@@ -7,7 +7,7 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       - name: "Checkout"
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -19,7 +19,7 @@ jobs:
       # This version is written in `charts/topolvm/README.md`,
       # so do not update it if not necessary.
       - name: "Install Helm"
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@v5
         with:
           version: "v3.5.0"
 
