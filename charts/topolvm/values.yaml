@@ -3,14 +3,14 @@ useLegacy: false
 
 image:
   # image.repository -- TopoLVM image repository to use.
-  repository: ghcr.io/anisurrahman75/topolvm-with-sidecar
+  repository: ghcr.io/topolvm/topolvm-with-sidecar
 
   # image.tag -- TopoLVM image tag to use.
   # @default -- `{{ .Chart.AppVersion }}`
-  tag: devel
+  tag:  # 0.18.1
 
   # image.pullPolicy -- TopoLVM image pullPolicy.
-  pullPolicy: IfNotPresent
+  pullPolicy:  # Always
 
   # image.pullSecrets -- List of imagePullSecrets.
   pullSecrets: []
@@ -52,7 +52,7 @@ scheduler:
   # Use only if you choose `scheduler.type` deployment
   deployment:
     # scheduler.deployment.replicaCount -- Number of replicas for Deployment.
-    replicaCount: 1
+    replicaCount: 2
 
   # Use only if you choose `scheduler.type` deployment
   service:
@@ -144,23 +144,12 @@ lvmd:
       volume-group: myvg1
       default: true
       spare-gb: 10
-    - name: "thin"
-      volume-group: "myvg1"
-      type: thin
-      thin-pool:
-        name: "pool0"
-        overprovision-ratio: 5.0
 
   # lvmd.lvcreateOptionClasses -- Specify the lvcreate-option-class settings.
-  lvcreateOptionClasses:
-    - name: topolvm-provisioner-thin
-      storageClass:
-        fsType: xfs
-        isDefaultClass: false
-        volumeBindingMode: WaitForFirstConsumer
-        allowVolumeExpansion: true
-        additionalParameters:
-          '{{ include "topolvm.pluginName" . }}/device-class': "thin"
+  lvcreateOptionClasses: []
+  # - name: ssd
+  #   options:
+  #     - --type=raid1
 
   # lvmd.additionalLVMDYamlContent -- Specify additional content to be added to the lvmd.yaml file.
   additionalLVMDYamlContent: {}
@@ -182,8 +171,7 @@ lvmd:
 
   # lvmd.nodeSelector -- Specify nodeSelector.
   ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
-  nodeSelector:
-    topolvm.io/enabled: "true"
+  nodeSelector: {}
 
   # lvmd.affinity -- Specify affinity.
   ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
@@ -361,8 +349,7 @@ node:
 
   # node.nodeSelector -- Specify nodeSelector.
   ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/
-  nodeSelector:
-    topolvm.io/enabled: "true"
+  nodeSelector: {}
 
   # node.affinity -- Specify affinity.
   ## ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#affinity-and-anti-affinity
@@ -440,7 +427,7 @@ node:
 # CSI controller service
 controller:
   # controller.replicaCount -- Number of replicas for CSI controller service.
-  replicaCount: 1
+  replicaCount: 2
 
   # controller.args -- Arguments to be passed to the command.
   args: []
@@ -726,14 +713,6 @@ storageClasses:
       # "topolvm.io/device-class": "ssd"
       # mount options
       mountOptions: []
-  - name: topolvm-provisioner-thin
-    storageClass:
-      fsType: xfs
-      isDefaultClass: false
-      volumeBindingMode: WaitForFirstConsumer
-      allowVolumeExpansion: true
-      additionalParameters:
-        '{{ include "topolvm.pluginName" . }}/device-class': "thin"
 
 webhook:
   # webhook.caBundle -- Specify the certificate to be used for AdmissionWebhook.
@@ -742,7 +721,7 @@ webhook:
   existingCertManagerIssuer: {}
     # group: cert-manager.io
     # kind: Issuer
-    # name: webhook-issuer
+  # name: webhook-issuer
   # webhook.certManager -- If true, cert-manager Certificate and Issuer resources are created
   # to generate the webhook TLS secret. If false, you must provide your own TLS secret
   # (see webhook.secretName).
@@ -761,7 +740,7 @@ webhook:
     # **WARNING**: Modifying objectSelector can affect TopoLVM Pod scheduling. Proceed with caution.
     ## ref: https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#matching-requests-objectselector
     objectSelector: {}
-      # webhook: topolvm
+    # webhook: topolvm
     # webhook.podMutatingWebhook.ignoreNamespaces -- Namespaces to be ignored by the Pod MutatingWebhook.
     ignoreNamespaces:
       - kube-system
