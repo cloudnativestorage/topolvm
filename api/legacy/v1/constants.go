@@ -100,16 +100,6 @@ const (
 	ReasonFailedToEnsureSnapshotDeleteExecutor      = "FailedToEnsureSnapshotDeleteExecutor"
 )
 
-// TypeSnapshotExecutorPodMissing indicates that the snapshot executor pod
-// (backup or restore) was observed as gone (NotFound in the API, or its phase
-// transitioned to PodFailed) while the owning LogicalVolume still had the
-// corresponding operation in flight. The SnapshotPodReconciler sets this
-// condition; the LV controller then runs the normal cleanup path.
-const (
-	TypeSnapshotExecutorPodMissing = "SnapshotExecutorPodMissing"
-	ReasonExecutorPodMissing      = "ExecutorPodMissing"
-)
-
 // Condition types for cleaning a LogicalVolume status
 const (
 	TypeSnapshotDeleteEnsured        = "SnapshotDeleteEnsured"

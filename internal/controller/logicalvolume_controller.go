@@ -299,7 +299,6 @@ func (r *LogicalVolumeReconciler) deletionWithSnapshot(ctx context.Context, lv *
 	return ctrl.Result{}, nil
 }
 
-
 func (r *LogicalVolumeReconciler) snapshotOperationToCleanUp(ctx context.Context, log logr.Logger, snap *snapshotHandler, lv *topolvmv1.LogicalVolume) (topolvmv1.OperationType, bool, error) {
 	if yes, err := isLVBackupCandidate(ctx, log, snap, lv); err != nil {
 		return "", false, err

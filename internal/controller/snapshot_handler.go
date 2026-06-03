@@ -407,7 +407,6 @@ func (h *snapshotHandler) updateSnapshotOperationStatus(ctx context.Context, lv 
 	return nil
 }
 
-
 func failSnapshotOperation(ctx context.Context, c client.Client, lv *topolvmv1.LogicalVolume, operation topolvmv1.OperationType, message string) error {
 	freshLV := &topolvmv1.LogicalVolume{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(lv), freshLV); err != nil {
