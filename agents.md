@@ -191,9 +191,24 @@ existing pod-lookup and idempotency semantics.
   deleted or transitions to `PodFailed`. The LV controller's existing
   `For(&LogicalVolume{})` watch then picks up the status update and
   runs the normal cleanup path. Purely event-driven (no periodic
-  requeue) so a multi-TB backup does not pay a per-tick API cost. The
-  executor pods now carry a `topolvm.io/snapshot-operation` label
-  (`Backup` / `Restore` / `Delete`) so the reconciler knows which
+  requeue) so a multi-TB backup does not pay a per-tick API
+  cost. The executor pods now carry a `topolvm.io/snapshot-operation`
+  label (`Backup` / `Restore` / `Delete`) so the reconciler knows which
   operation to fail out without having to fetch the LV first. See
   `prompts/backup-restore-pod-deletion.md` for the original design
   notes.
+- **`LogicalVolumeReconciler` does not have a `snapshot` field.** The
+  `snapshotHandler` is per-reconcile state (it carries the source LV,
+  the resolved VolumeSnapshotContent/Class, and the
+  shouldBackup/shouldRestore decisions for one specific LV). It is
+  created as a local variable in `Reconcile` and threaded through
+  every helper that needs it. Earlier versions stored it as a field
+  on the reconciler, which was a data race: two concurrent
+  `Reconcile` calls for different LVs would step on each other's
+  `shouldBackup` / `sourceLV` fields. Even with
+  `MaxConcurrentReconciles=1`, the field is re-allocated for every LV
+  in sequence, so the design was just wrong. The helpers that take
+  `snap` are: `reconcile`, `reconcileSnapshotRestore`,
+  `reconcileSnapshotBackup`, `handleDeletion`, `deletionWithSnapshot`,
+  `deleteSnapshotPodAndUnMount`, `snapshotOperationToCleanUp`. Do not
+  reintroduce the field.
