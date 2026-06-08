@@ -11,43 +11,35 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
-// podClient is a hand-rolled client.Client double scoped to the surface area
-// of (*snapshotHandler).deleteRunningSnapshotPod, which only calls Get and
-// Delete on *corev1.Pod. Embedding client.Client as a nil interface means any
-// other method call will panic - that's deliberate so the test surfaces
-// unintended dependencies immediately.
-type podClient struct {
+func newScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("corev1.AddToScheme: %v", err)
+	}
+	if err := topolvmv1.AddToScheme(s); err != nil {
+		t.Fatalf("topolvmv1.AddToScheme: %v", err)
+	}
+	return s
+}
+
+// recordingClient wraps a fake client.Client and counts Delete calls so the
+// tests can assert that deleteRunningSnapshotPod issues Delete exactly once
+// per running pod and never against an already-terminating pod.
+type recordingClient struct {
 	client.Client
-	pod         *corev1.Pod // nil = NotFound
-	getErr      error       // if non-nil, returned from Get instead of the pod
 	deleteCalls int
-	deleteErr   error
 }
 
-var _ client.Client = (*podClient)(nil)
-
-func (f *podClient) Get(_ context.Context, key client.ObjectKey, obj client.Object, _ ...client.GetOption) error {
-	if f.getErr != nil {
-		return f.getErr
-	}
-	if f.pod == nil {
-		return apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, key.Name)
-	}
-	p, ok := obj.(*corev1.Pod)
-	if !ok {
-		return errors.New("podClient.Get only supports *corev1.Pod")
-	}
-	*p = *f.pod.DeepCopy()
-	return nil
-}
-
-func (f *podClient) Delete(_ context.Context, _ client.Object, _ ...client.DeleteOption) error {
-	f.deleteCalls++
-	return f.deleteErr
+func (r *recordingClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	r.deleteCalls++
+	return r.Client.Delete(ctx, obj, opts...)
 }
 
 func newHandlerWithClient(c client.Client) *snapshotHandler {
@@ -75,11 +67,11 @@ func TestDeleteRunningSnapshotPod(t *testing.T) {
 	}
 	terminating := running.DeepCopy()
 	terminating.DeletionTimestamp = &deletionTime
-	terminating.Finalizers = []string{"kubernetes"} // required for DeletionTimestamp to round-trip
+	terminating.Finalizers = []string{"kubernetes"} // required for the fake to retain a DeletionTimestamp
 
 	cases := []struct {
 		name        string
-		pod         *corev1.Pod
+		seed        *corev1.Pod // nil = pod not present in the API
 		getErr      error
 		wantRequeue bool
 		wantErr     bool
@@ -87,19 +79,19 @@ func TestDeleteRunningSnapshotPod(t *testing.T) {
 	}{
 		{
 			name:        "pod gone from API; proceed to unmount",
-			pod:         nil,
+			seed:        nil,
 			wantRequeue: false,
 			wantDeletes: 0,
 		},
 		{
 			name:        "pod running; issue Delete and requeue",
-			pod:         running,
+			seed:        running.DeepCopy(),
 			wantRequeue: true,
 			wantDeletes: 1,
 		},
 		{
 			name:        "pod already terminating; do not re-issue Delete",
-			pod:         terminating,
+			seed:        terminating.DeepCopy(),
 			wantRequeue: true,
 			wantDeletes: 0,
 		},
@@ -110,10 +102,22 @@ func TestDeleteRunningSnapshotPod(t *testing.T) {
 		},
 	}
 
+	scheme := newScheme(t)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			fc := &podClient{pod: tc.pod, getErr: tc.getErr}
-			h := newHandlerWithClient(fc)
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tc.seed != nil {
+				builder = builder.WithObjects(tc.seed)
+			}
+			if tc.getErr != nil {
+				builder = builder.WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(_ context.Context, _ client.WithWatch, _ client.ObjectKey, _ client.Object, _ ...client.GetOption) error {
+						return tc.getErr
+					},
+				})
+			}
+			rc := &recordingClient{Client: builder.Build()}
+			h := newHandlerWithClient(rc)
 			requeue, err := h.deleteRunningSnapshotPod(context.Background(), logr.Discard(), lv, topolvmv1.OperationBackup)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)
@@ -121,8 +125,8 @@ func TestDeleteRunningSnapshotPod(t *testing.T) {
 			if requeue != tc.wantRequeue {
 				t.Errorf("requeue = %v, want %v", requeue, tc.wantRequeue)
 			}
-			if fc.deleteCalls != tc.wantDeletes {
-				t.Errorf("Delete calls = %d, want %d", fc.deleteCalls, tc.wantDeletes)
+			if rc.deleteCalls != tc.wantDeletes {
+				t.Errorf("Delete calls = %d, want %d", rc.deleteCalls, tc.wantDeletes)
 			}
 		})
 	}
@@ -140,31 +144,56 @@ func TestDeleteRunningSnapshotPod_TerminationOrdering(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-lv"},
 	}
 	podName := executor.BuildSnapshotPodName(topolvmv1.OperationBackup, lv)
+	podKey := client.ObjectKey{Namespace: executor.GetPodNamespace(), Name: podName}
 
-	// Step 1: pod is running. Expect Delete + requeue.
-	now := metav1.Now()
-	fc := &podClient{pod: &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: podName, Namespace: executor.GetPodNamespace()},
-	}}
-	h := newHandlerWithClient(fc)
-	requeue, err := h.deleteRunningSnapshotPod(context.Background(), logr.Discard(), lv, topolvmv1.OperationBackup)
-	if err != nil || !requeue || fc.deleteCalls != 1 {
-		t.Fatalf("step1: requeue=%v err=%v deletes=%d; want requeue=true err=nil deletes=1", requeue, err, fc.deleteCalls)
+	// Step 1: seed a running pod with a finalizer so the fake retains the
+	// object after Delete (it'll just set DeletionTimestamp, mimicking real
+	// kubelet behavior).
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       podName,
+			Namespace:  executor.GetPodNamespace(),
+			Finalizers: []string{"test/keep-around"},
+		},
+	}
+	scheme := newScheme(t)
+	rc := &recordingClient{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build()}
+	h := newHandlerWithClient(rc)
+	ctx := context.Background()
+
+	requeue, err := h.deleteRunningSnapshotPod(ctx, logr.Discard(), lv, topolvmv1.OperationBackup)
+	if err != nil || !requeue || rc.deleteCalls != 1 {
+		t.Fatalf("step1: requeue=%v err=%v deletes=%d; want requeue=true err=nil deletes=1", requeue, err, rc.deleteCalls)
 	}
 
-	// Step 2: kubelet observed the delete; pod has DeletionTimestamp set.
-	// We must NOT call Delete again and must keep requeueing.
-	fc.pod.DeletionTimestamp = &now
-	fc.pod.Finalizers = []string{"kubernetes"}
-	requeue, err = h.deleteRunningSnapshotPod(context.Background(), logr.Discard(), lv, topolvmv1.OperationBackup)
-	if err != nil || !requeue || fc.deleteCalls != 1 {
-		t.Fatalf("step2: requeue=%v err=%v deletes=%d; want requeue=true err=nil deletes=1 (no re-issue)", requeue, err, fc.deleteCalls)
+	// Verify the fake recorded DeletionTimestamp on the pod - this is what
+	// the real apiserver does when a finalizer keeps the object pinned.
+	got := &corev1.Pod{}
+	if err := rc.Get(ctx, podKey, got); err != nil {
+		t.Fatalf("step1: re-get pod: %v", err)
+	}
+	if got.DeletionTimestamp.IsZero() {
+		t.Fatalf("step1: expected DeletionTimestamp set after Delete")
 	}
 
-	// Step 3: kubelet finalized teardown; pod is gone from the API. Only now
-	// is the LV controller cleared to proceed to unmount + lvremove.
-	fc.pod = nil
-	requeue, err = h.deleteRunningSnapshotPod(context.Background(), logr.Discard(), lv, topolvmv1.OperationBackup)
+	// Step 2: pod is terminating. The function must NOT call Delete again.
+	requeue, err = h.deleteRunningSnapshotPod(ctx, logr.Discard(), lv, topolvmv1.OperationBackup)
+	if err != nil || !requeue || rc.deleteCalls != 1 {
+		t.Fatalf("step2: requeue=%v err=%v deletes=%d; want requeue=true err=nil deletes=1 (no re-issue)", requeue, err, rc.deleteCalls)
+	}
+
+	// Step 3: kubelet finalized teardown. Drop the finalizer so the fake
+	// finishes the deletion, then call again - this time we should get
+	// requeue=false meaning the LV controller is cleared to unmount.
+	got.Finalizers = nil
+	if err := rc.Update(ctx, got); err != nil {
+		t.Fatalf("step3: clear finalizer: %v", err)
+	}
+	if err := rc.Get(ctx, podKey, &corev1.Pod{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("step3: expected pod NotFound after finalizer removal, got %v", err)
+	}
+
+	requeue, err = h.deleteRunningSnapshotPod(ctx, logr.Discard(), lv, topolvmv1.OperationBackup)
 	if err != nil || requeue {
 		t.Fatalf("step3: requeue=%v err=%v; want requeue=false err=nil", requeue, err)
 	}
