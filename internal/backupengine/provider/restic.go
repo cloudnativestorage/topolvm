@@ -18,8 +18,8 @@ const (
 )
 
 // NewResticProvider creates a new Restic repository provider
-func NewResticProvider(client client.Client, snapStorage *v1.SnapshotBackupStorage, ri *RepoInf, lv *v1.LogicalVolume) (Provider, error) {
-	backend := &restic.Backend{ConfigResolver: v1.NewSnapshotStorageResolver(client, snapStorage)}
+func NewResticProvider(ctx context.Context, client client.Client, snapStorage *v1.SnapshotBackupStorage, ri *RepoInf, lv *v1.LogicalVolume) (Provider, error) {
+	backend := &restic.Backend{ConfigResolver: v1.NewSnapshotStorageResolver(ctx, client, snapStorage)}
 	if ri != nil {
 		backend.Repository = ri.Name
 		backend.Directory = ri.Path

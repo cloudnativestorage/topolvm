@@ -36,15 +36,15 @@ func NewSnapshotDeleteExecutor(
 }
 
 // Execute creates a delete pod that will perform the snapshot deletion operation.
-func (e *DeleteExecutor) Execute() error {
+func (e *DeleteExecutor) Execute(ctx context.Context) error {
 	objMeta := buildObjectMeta(topolvmv1.OperationDelete, e.lv)
-	hostPod, err := getHostPod(e.client)
+	hostPod, err := getHostPod(ctx, e.client)
 	if err != nil {
 		return err
 	}
 
 	e.namespace = hostPod.Namespace
-	podSpec, err := e.buildPodSpec(hostPod)
+	podSpec, err := e.buildPodSpec(ctx, hostPod)
 	if err != nil {
 		return err
 	}
@@ -54,12 +54,12 @@ func (e *DeleteExecutor) Execute() error {
 		Spec:       podSpec,
 	}
 
-	err = e.createDeletePod(pod)
+	err = e.createDeletePod(ctx, pod)
 	return err
 }
 
-func (e *DeleteExecutor) buildPodSpec(hostPod *corev1.Pod) (corev1.PodSpec, error) {
-	daemonSet, err := getDaemonSetFromOwnerRef(e.client, hostPod)
+func (e *DeleteExecutor) buildPodSpec(ctx context.Context, hostPod *corev1.Pod) (corev1.PodSpec, error) {
+	daemonSet, err := getDaemonSetFromOwnerRef(ctx, e.client, hostPod)
 	if err != nil {
 		return corev1.PodSpec{}, err
 	}
@@ -87,14 +87,14 @@ func (e *DeleteExecutor) buildPodSpec(hostPod *corev1.Pod) (corev1.PodSpec, erro
 	return *podSpec, nil
 }
 
-func (e *DeleteExecutor) createDeletePod(pod *corev1.Pod) error {
+func (e *DeleteExecutor) createDeletePod(ctx context.Context, pod *corev1.Pod) error {
 	existingPod := new(corev1.Pod)
-	err := e.client.Get(context.Background(), client.ObjectKeyFromObject(pod), existingPod)
+	err := e.client.Get(ctx, client.ObjectKeyFromObject(pod), existingPod)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
 		}
-		if err := e.client.Create(context.Background(), pod); err != nil {
+		if err := e.client.Create(ctx, pod); err != nil {
 			return fmt.Errorf("failed to create Delete Executor pod: %w", err)
 		}
 		logger.Info("Created Delete Executor Pod", "name", pod.Name)

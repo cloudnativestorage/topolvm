@@ -192,7 +192,7 @@ func (h *snapshotHandler) backupSnapshot(ctx context.Context, log logr.Logger, l
 }
 
 func (h *snapshotHandler) executeSnapshotOperation(ctx context.Context, lv *topolvmv1.LogicalVolume, exec executor.Executor, operation topolvmv1.OperationType, log logr.Logger) error {
-	if err := exec.Execute(); err != nil {
+	if err := exec.Execute(ctx); err != nil {
 		errorCode := "SnapshotExecutionFailed"
 		log.Error(err, "failed to execute operation", "operation", operation, "name", lv.Name)
 
@@ -215,7 +215,7 @@ func (h *snapshotHandler) executeCleanerOperation(ctx context.Context, log logr.
 	if err == nil {
 		log.Info("successfully unmounted LV", "name", lv.Name, "uid", lv.UID)
 		exec := executor.NewCleanerExecutor(h.client, lv, operation)
-		err = exec.Execute()
+		err = exec.Execute(ctx)
 	}
 	if err != nil {
 		if newErr := setSnapshotExecutorCleanupToFalse(ctx, h.client, operation, lv, err); newErr != nil {
@@ -332,7 +332,7 @@ func (h *snapshotHandler) executeSnapshotDeleteOperation(ctx context.Context, lo
 	err := h.lvMount.Unmount(ctx, lv)
 	if err == nil {
 		exec := executor.NewSnapshotDeleteExecutor(h.client, lv, h.vsClass)
-		err = exec.Execute()
+		err = exec.Execute(ctx)
 	}
 	if err != nil {
 		if newErr := setSnapshotDeleteExecutorEnsuredToFalse(ctx, h.client, lv, err); newErr != nil {

@@ -9,8 +9,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// NewSnapshotStorageResolver creates a StorageConfigResolver that resolves storage configuration
-func NewSnapshotStorageResolver(kbClient client.Client, bs *SnapshotBackupStorage) restic.StorageConfigResolver {
+// NewSnapshotStorageResolver creates a StorageConfigResolver that resolves storage configuration.
+// The provided ctx is captured by the returned resolver and used for the Secret lookup so that
+// reconcile timeouts propagate into the credential fetch.
+func NewSnapshotStorageResolver(ctx context.Context, kbClient client.Client, bs *SnapshotBackupStorage) restic.StorageConfigResolver {
 	return func(backend *restic.Backend) error {
 		var storageSecretName string
 		switch {
@@ -51,7 +53,7 @@ func NewSnapshotStorageResolver(kbClient client.Client, bs *SnapshotBackupStorag
 
 		if storageSecretName != "" {
 			secret := &core.Secret{}
-			if err := kbClient.Get(context.Background(), client.ObjectKey{Name: storageSecretName, Namespace: bs.Namespace}, secret); err != nil {
+			if err := kbClient.Get(ctx, client.ObjectKey{Name: storageSecretName, Namespace: bs.Namespace}, secret); err != nil {
 				return fmt.Errorf("failed to get storage Secret %s/%s: %w", bs.Namespace, storageSecretName, err)
 			}
 			backend.StorageSecret = secret

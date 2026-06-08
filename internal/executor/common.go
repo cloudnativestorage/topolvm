@@ -65,7 +65,7 @@ func buildAnnotations(lv *topolvmv1.LogicalVolume) map[string]string {
 	return annotations
 }
 
-func getHostPod(rClient client.Client) (*corev1.Pod, error) {
+func getHostPod(ctx context.Context, rClient client.Client) (*corev1.Pod, error) {
 	hostPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      os.Getenv(EnvHostName),
@@ -73,7 +73,7 @@ func getHostPod(rClient client.Client) (*corev1.Pod, error) {
 		},
 	}
 
-	if err := rClient.Get(context.Background(), client.ObjectKeyFromObject(hostPod), hostPod); err != nil {
+	if err := rClient.Get(ctx, client.ObjectKeyFromObject(hostPod), hostPod); err != nil {
 		return nil, fmt.Errorf("failed to get host pod: %w", err)
 	}
 

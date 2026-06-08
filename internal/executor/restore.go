@@ -44,15 +44,15 @@ func NewSnapshotRestoreExecutor(
 }
 
 // Execute creates a restore pod that will perform the online restore operation.
-func (e *RestoreExecutor) Execute() error {
+func (e *RestoreExecutor) Execute(ctx context.Context) error {
 	objMeta := buildObjectMeta(topolvmv1.OperationRestore, e.lv)
-	hostPod, err := getHostPod(e.client)
+	hostPod, err := getHostPod(ctx, e.client)
 	if err != nil {
 		return err
 	}
 
 	e.namespace = hostPod.Namespace
-	podSpec, err := e.buildPodSpec(hostPod)
+	podSpec, err := e.buildPodSpec(ctx, hostPod)
 	if err != nil {
 		return err
 	}
@@ -62,12 +62,12 @@ func (e *RestoreExecutor) Execute() error {
 		Spec:       podSpec,
 	}
 
-	err = e.createRestorePod(pod)
+	err = e.createRestorePod(ctx, pod)
 	return err
 }
 
-func (e *RestoreExecutor) buildPodSpec(hostPod *corev1.Pod) (corev1.PodSpec, error) {
-	daemonSet, err := getDaemonSetFromOwnerRef(e.client, hostPod)
+func (e *RestoreExecutor) buildPodSpec(ctx context.Context, hostPod *corev1.Pod) (corev1.PodSpec, error) {
+	daemonSet, err := getDaemonSetFromOwnerRef(ctx, e.client, hostPod)
 	if err != nil {
 		return corev1.PodSpec{}, err
 	}
@@ -100,15 +100,15 @@ func (e *RestoreExecutor) buildPodSpec(hostPod *corev1.Pod) (corev1.PodSpec, err
 	return *podSpec, nil
 }
 
-func (e *RestoreExecutor) createRestorePod(pod *corev1.Pod) error {
+func (e *RestoreExecutor) createRestorePod(ctx context.Context, pod *corev1.Pod) error {
 	existingPod := new(corev1.Pod)
-	err := e.client.Get(context.Background(), client.ObjectKeyFromObject(pod), existingPod)
+	err := e.client.Get(ctx, client.ObjectKeyFromObject(pod), existingPod)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
 		}
 
-		if err := e.client.Create(context.Background(), pod); err != nil {
+		if err := e.client.Create(ctx, pod); err != nil {
 			return fmt.Errorf("failed to create Restore Ensurer pod: %w", err)
 		}
 		logger.Info("Created Restore Ensurer Pod", "name", pod.Name)

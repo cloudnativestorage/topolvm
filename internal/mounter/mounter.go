@@ -70,7 +70,7 @@ func (m *LVMount) Mount(ctx context.Context, k8sLV *v1.LogicalVolume, mountOpts 
 
 	// Default to ext4 if no filesystem is detected
 	if fsType == "" {
-		fsType, err = m.getFSTypeFromPV(k8sLV)
+		fsType, err = m.getFSTypeFromPV(ctx, k8sLV)
 		if err != nil {
 			return resp, fmt.Errorf("failed to get FSType from StorageClass: %v", err)
 		}
@@ -117,13 +117,13 @@ func (m *LVMount) Mount(ctx context.Context, k8sLV *v1.LogicalVolume, mountOpts 
 	return resp, nil
 }
 
-func (m *LVMount) getFSTypeFromPV(k8sLv *v1.LogicalVolume) (string, error) {
+func (m *LVMount) getFSTypeFromPV(ctx context.Context, k8sLv *v1.LogicalVolume) (string, error) {
 	pv := &corev1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: k8sLv.Spec.Name,
 		},
 	}
-	if err := m.client.Get(context.TODO(), client.ObjectKeyFromObject(pv), pv); err != nil {
+	if err := m.client.Get(ctx, client.ObjectKeyFromObject(pv), pv); err != nil {
 		return "", err
 	}
 	if pv.Spec.CSI == nil {

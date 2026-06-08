@@ -171,7 +171,7 @@ func (opt *BackupOptions) executeBackup(ctx context.Context) (*provider.BackupRe
 		"repo-name", params.Repo.Name, "repo-path", params.Repo.Path,
 		"backup-paths", params.BackupPaths, "exclude", params.Exclude, "args", params.Args,
 	)
-	pvider, err := getProvider(opt.client, opt.log, opt.snapshotStorage, params.Repo, opt.logicalVol)
+	pvider, err := getProvider(ctx, opt.client, opt.log, opt.snapshotStorage, params.Repo, opt.logicalVol)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize backup provider: %w", err)
 	}

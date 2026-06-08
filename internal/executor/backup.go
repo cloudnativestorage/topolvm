@@ -53,18 +53,18 @@ func NewSnapshotBackupExecutor(
 }
 
 // Execute creates a snapshot pod that will perform the online snapshot operation.
-func (e *SnapshotExecutor) Execute() error {
+func (e *SnapshotExecutor) Execute(ctx context.Context) error {
 	objMeta := buildObjectMeta(topolvmv1.OperationBackup, e.logicalVolume)
-	hostPod, err := getHostPod(e.client)
+	hostPod, err := getHostPod(ctx, e.client)
 	if err != nil {
 		return err
 	}
 
-	err = e.setTargetedPVCInfo()
+	err = e.setTargetedPVCInfo(ctx)
 	if err != nil {
 		return err
 	}
-	podSpec, err := e.buildPodSpec(hostPod)
+	podSpec, err := e.buildPodSpec(ctx, hostPod)
 	if err != nil {
 		return err
 	}
@@ -74,11 +74,11 @@ func (e *SnapshotExecutor) Execute() error {
 		Spec:       podSpec,
 	}
 
-	err = e.createSnapshotPod(pod)
+	err = e.createSnapshotPod(ctx, pod)
 	return err
 }
 
-func (e *SnapshotExecutor) setTargetedPVCInfo() error {
+func (e *SnapshotExecutor) setTargetedPVCInfo(ctx context.Context) error {
 	if e.vsContent.Spec.VolumeSnapshotRef.Kind != "VolumeSnapshot" ||
 		e.vsContent.Spec.VolumeSnapshotRef.Name == "" ||
 		e.vsContent.Spec.VolumeSnapshotRef.Namespace == "" {
@@ -91,7 +91,7 @@ func (e *SnapshotExecutor) setTargetedPVCInfo() error {
 			Namespace: e.vsContent.Spec.VolumeSnapshotRef.Namespace,
 		},
 	}
-	if err := e.client.Get(context.Background(), client.ObjectKeyFromObject(&vs), &vs); err != nil {
+	if err := e.client.Get(ctx, client.ObjectKeyFromObject(&vs), &vs); err != nil {
 		return fmt.Errorf("failed to get VolumeSnapshot %s/%s: %w", vs.Namespace, vs.Name, err)
 	}
 
@@ -105,15 +105,15 @@ func (e *SnapshotExecutor) setTargetedPVCInfo() error {
 	return nil
 }
 
-func (e *SnapshotExecutor) createSnapshotPod(pod *corev1.Pod) error {
+func (e *SnapshotExecutor) createSnapshotPod(ctx context.Context, pod *corev1.Pod) error {
 	existingPod := new(corev1.Pod)
-	err := e.client.Get(context.Background(), client.ObjectKeyFromObject(pod), existingPod)
+	err := e.client.Get(ctx, client.ObjectKeyFromObject(pod), existingPod)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
 		}
 
-		if err := e.client.Create(context.Background(), pod); err != nil {
+		if err := e.client.Create(ctx, pod); err != nil {
 			return fmt.Errorf("failed to create Snapshot Ensurer pod: %w", err)
 		}
 		logger.Info("Created Snapshot Ensurer Pod", "name", pod.Name)
@@ -126,8 +126,8 @@ func (e *SnapshotExecutor) createSnapshotPod(pod *corev1.Pod) error {
 // buildPodSpec constructs the pod spec by copying from the DaemonSet's pod template
 // (via owner reference) and replacing containers with the snapshot container.
 // The affinity is taken from the actual running pod, not the DaemonSet template.
-func (e *SnapshotExecutor) buildPodSpec(hostPod *corev1.Pod) (corev1.PodSpec, error) {
-	daemonSet, err := getDaemonSetFromOwnerRef(e.client, hostPod)
+func (e *SnapshotExecutor) buildPodSpec(ctx context.Context, hostPod *corev1.Pod) (corev1.PodSpec, error) {
+	daemonSet, err := getDaemonSetFromOwnerRef(ctx, e.client, hostPod)
 	if err != nil {
 		return corev1.PodSpec{}, err
 	}
@@ -161,7 +161,7 @@ func (e *SnapshotExecutor) buildPodSpec(hostPod *corev1.Pod) (corev1.PodSpec, er
 }
 
 // getDaemonSetFromOwnerRef retrieves the DaemonSet from the pod's owner reference.
-func getDaemonSetFromOwnerRef(rClient client.Client, pod *corev1.Pod) (*appsv1.DaemonSet, error) {
+func getDaemonSetFromOwnerRef(ctx context.Context, rClient client.Client, pod *corev1.Pod) (*appsv1.DaemonSet, error) {
 	// Find the DaemonSet owner reference
 	var daemonSetRef *metav1.OwnerReference
 	for i := range pod.OwnerReferences {
@@ -183,7 +183,7 @@ func getDaemonSetFromOwnerRef(rClient client.Client, pod *corev1.Pod) (*appsv1.D
 		},
 	}
 
-	if err := rClient.Get(context.Background(), client.ObjectKeyFromObject(daemonSet), daemonSet); err != nil {
+	if err := rClient.Get(ctx, client.ObjectKeyFromObject(daemonSet), daemonSet); err != nil {
 		return nil, fmt.Errorf("failed to get DaemonSet %s/%s: %w", pod.Namespace, daemonSetRef.Name, err)
 	}
 

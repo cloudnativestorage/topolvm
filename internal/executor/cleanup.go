@@ -26,8 +26,7 @@ func NewCleanerExecutor(client client.Client, logicalVolume *topolvmv1.LogicalVo
 	}
 }
 
-func (e *CleanerExecutor) Execute() error {
-	ctx := context.Background()
+func (e *CleanerExecutor) Execute(ctx context.Context) error {
 	logger := log.FromContext(ctx)
 	objMeta := buildObjectMeta(e.operation, e.logicalVolume)
 	logger.Info("Cleaning up", "objMeta", objMeta)
