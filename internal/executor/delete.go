@@ -37,6 +37,14 @@ func NewSnapshotDeleteExecutor(
 
 // Execute creates a delete pod that will perform the snapshot deletion operation.
 func (e *DeleteExecutor) Execute(ctx context.Context) error {
+	// The delete pod runs `restic forget` (or equivalent) against the remote
+	// repository, which requires a snapshot handle that lives on
+	// Status.Snapshot. Without it the pod would launch with empty args, exit
+	// non-zero, and leave the remote snapshot orphaned. Fail fast instead so
+	// the caller can surface a clear error.
+	if e.lv.Status.Snapshot == nil {
+		return fmt.Errorf("cannot start Delete pod for LV %s: no Status.Snapshot recorded", e.lv.Name)
+	}
 	if err := failIfConflictingSnapshotPodExists(ctx, e.client, topolvmv1.OperationDelete, e.lv); err != nil {
 		return err
 	}
@@ -132,6 +140,9 @@ func (e *DeleteExecutor) buildDeleteContainer(templateContainer *corev1.Containe
 	return container
 }
 
+// buildDeleteArgs assumes Execute has already validated that
+// e.lv.Status.Snapshot is non-nil; that check lives at the Execute entry
+// point so a missing snapshot fails before any pod gets created.
 func (e *DeleteExecutor) buildDeleteArgs() []string {
 	defaultNamespaceIfEmpty := func(name string) string {
 		if name == "" {
@@ -139,21 +150,12 @@ func (e *DeleteExecutor) buildDeleteArgs() []string {
 		}
 		return name
 	}
-
-	// Validate that we have snapshot information
-	if e.lv.Status.Snapshot == nil {
-		logger.Error(nil, "LogicalVolume has no snapshot status", "lv", e.lv.Name)
-		return []string{}
-	}
-
-	args := []string{
+	return []string{
 		fmt.Sprintf("--lv-name=%s", e.lv.Name),
 		fmt.Sprintf("--repo-path=%s", e.lv.Status.Snapshot.Path),
 		fmt.Sprintf("--snapshot-storage-name=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageName])),
 		fmt.Sprintf("--snapshot-storage-namespace=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageNamespace])),
 	}
-
-	return args
 }
 
 // buildDeleteEnv constructs the environment variables for the delete container.
