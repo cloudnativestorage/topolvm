@@ -222,6 +222,17 @@ func (s *LogicalVolumeService) CreateVolumeWithEncryption(
 	return created, nil
 }
 
+// GetByName fetches an LV by its k8s object name into out.
+func (s *LogicalVolumeService) GetByName(ctx context.Context, name string, out *topolvmv1.LogicalVolume) error {
+	return s.getter.Get(ctx, client.ObjectKey{Name: name}, out)
+}
+
+// UpdateStatus updates the status subresource of the given LV. Used by the
+// node-side encryption coordinator to record headerUUID, state transitions.
+func (s *LogicalVolumeService) UpdateStatus(ctx context.Context, lv *topolvmv1.LogicalVolume) error {
+	return s.writer.Status().Update(ctx, lv)
+}
+
 // patchEncryptionStatus initializes lv.status.encryption with the active key id
 // so the node knows which EncryptionKey to consume at first publish.
 func (s *LogicalVolumeService) patchEncryptionStatus(ctx context.Context, lvName, activeKeyID string) error {

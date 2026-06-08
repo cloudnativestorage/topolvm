@@ -16,6 +16,8 @@ import (
 	topolvmlegacyv1 "github.com/topolvm/topolvm/api/legacy/v1"
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
 	clientwrapper "github.com/topolvm/topolvm/internal/client"
+	"github.com/topolvm/topolvm/internal/crypt"
+	"github.com/topolvm/topolvm/internal/keyprovider"
 	"github.com/topolvm/topolvm/internal/runners"
 	"github.com/topolvm/topolvm/pkg/controller"
 	"github.com/topolvm/topolvm/pkg/driver"
@@ -149,7 +151,22 @@ func subMain(ctx context.Context) error {
 	// Add gRPC server to manager.
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(ErrorLoggingInterceptor))
 	csi.RegisterIdentityServer(grpcServer, driver.NewIdentityServer(checker.Ready))
-	nodeServer, err := driver.NewNodeServer(nodename, vgService, lvService, mgr) // adjusted signature
+	var encDeps *driver.EncryptionDeps
+	if config.encryptionEnabled {
+		if config.keyProviderName == "" {
+			return fmt.Errorf("--key-provider is required when --encryption-enabled is true")
+		}
+		kp, err := keyprovider.New(config.keyProviderName, config.keyProviderConfig)
+		if err != nil {
+			return fmt.Errorf("initialize key provider %q: %w", config.keyProviderName, err)
+		}
+		encDeps = &driver.EncryptionDeps{
+			CryptManager: crypt.NewManager(config.cryptsetupPath),
+			KeyProvider:  kp,
+		}
+		setupLog.Info("encryption enabled", "provider", config.keyProviderName, "cryptsetup", config.cryptsetupPath)
+	}
+	nodeServer, err := driver.NewNodeServerWithEncryption(nodename, vgService, lvService, mgr, encDeps)
 	if err != nil {
 		return err
 	}

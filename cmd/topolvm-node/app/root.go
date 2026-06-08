@@ -24,6 +24,12 @@ var config struct {
 	lvmPath              string
 	lvmd                 lvmd.Config
 	profilingBindAddress string
+
+	// Encryption (TDE) configuration. Disabled unless --encryption-enabled is true.
+	encryptionEnabled bool
+	keyProviderName   string
+	keyProviderConfig string
+	cryptsetupPath    string
 }
 
 var rootCmd = &cobra.Command{
@@ -63,6 +69,10 @@ func init() {
 	fs.StringVar(&config.lvmPath, "lvm-path", "", "lvm command path on the host OS. This is deprecated and users should use lvm-command-prefix setting instead.")
 	fs.StringVar(&cfgFilePath, "config", filepath.Join("/etc", "topolvm", "lvmd.yaml"), "config file")
 	fs.StringVar(&config.profilingBindAddress, "profiling-bind-address", "", "Bind pprof profiling to the given network address. If empty, profiling is disabled.")
+	fs.BoolVar(&config.encryptionEnabled, "encryption-enabled", false, "Enable transparent data encryption (TDE) for encrypted LogicalVolumes.")
+	fs.StringVar(&config.keyProviderName, "key-provider", "", "KeyProvider name to use when encryption is enabled (vault|aws-kms|gcp-kms|azure-kv|pkcs11|fake).")
+	fs.StringVar(&config.keyProviderConfig, "key-provider-config", "", "Path to the provider-specific config file. Must contain no secret material.")
+	fs.StringVar(&config.cryptsetupPath, "cryptsetup-path", "cryptsetup", "cryptsetup binary path on the host OS.")
 
 	_ = viper.BindEnv("nodename", "NODE_NAME")
 	_ = viper.BindPFlag("nodename", fs.Lookup("nodename"))
