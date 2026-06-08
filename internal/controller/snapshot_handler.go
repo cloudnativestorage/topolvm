@@ -484,6 +484,12 @@ func (h *snapshotHandler) handleSnapshotStorageNotFound(ctx context.Context, log
 }
 
 func (h *snapshotHandler) validateSnapshotStorageExists(ctx context.Context) error {
+	// vsClass is resolved by buildSnapshotContextFr{Backup,Restore}; it can legitimately be
+	// nil when there's no VolumeSnapshotContent for this LV (see getVolumeSnapshotInfo).
+	// Guard the deref so a reconcile after the VSContent is gone doesn't panic.
+	if h.vsClass == nil {
+		return fmt.Errorf("no VolumeSnapshotClass resolved; cannot validate snapshot storage")
+	}
 	storageName := h.vsClass.Parameters[SnapshotStorageName]
 	storageNamespace := h.vsClass.Parameters[SnapshotStorageNamespace]
 	if storageNamespace == "" {
