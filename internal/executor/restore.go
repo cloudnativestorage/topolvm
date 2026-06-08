@@ -45,6 +45,9 @@ func NewSnapshotRestoreExecutor(
 
 // Execute creates a restore pod that will perform the online restore operation.
 func (e *RestoreExecutor) Execute(ctx context.Context) error {
+	if err := failIfConflictingSnapshotPodExists(ctx, e.client, topolvmv1.OperationRestore, e.lv); err != nil {
+		return err
+	}
 	objMeta := buildObjectMeta(topolvmv1.OperationRestore, e.lv)
 	hostPod, err := getHostPod(ctx, e.client)
 	if err != nil {

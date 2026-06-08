@@ -37,6 +37,9 @@ func NewSnapshotDeleteExecutor(
 
 // Execute creates a delete pod that will perform the snapshot deletion operation.
 func (e *DeleteExecutor) Execute(ctx context.Context) error {
+	if err := failIfConflictingSnapshotPodExists(ctx, e.client, topolvmv1.OperationDelete, e.lv); err != nil {
+		return err
+	}
 	objMeta := buildObjectMeta(topolvmv1.OperationDelete, e.lv)
 	hostPod, err := getHostPod(ctx, e.client)
 	if err != nil {
