@@ -251,9 +251,21 @@ func (h *snapshotHandler) deleteRunningSnapshotPod(ctx context.Context, log logr
 	}
 	if err := h.client.Get(ctx, client.ObjectKeyFromObject(pod), pod); err != nil {
 		if apierrs.IsNotFound(err) {
+			// Pod is fully gone from the API. The kubelet finished terminating
+			// the container and released the hostPath mount, so it is safe to
+			// proceed to unmount and lvremove.
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to get %s pod %s/%s: %w", operation, namespace, podName, err)
+	}
+	// If a deletion is already in flight, requeue without re-issuing Delete.
+	// The pod will disappear from the API once the kubelet finishes teardown
+	// (releasing the hostPath mount); the next reconcile observes NotFound and
+	// proceeds to unmount.
+	if !pod.DeletionTimestamp.IsZero() {
+		log.Info("snapshot pod already terminating; waiting for removal",
+			"name", lv.Name, "pod", podName, "namespace", namespace, "operation", operation, "phase", pod.Status.Phase)
+		return true, nil
 	}
 	log.Info("deleting running snapshot pod before LV removal",
 		"name", lv.Name, "pod", podName, "namespace", namespace, "operation", operation, "phase", pod.Status.Phase)
