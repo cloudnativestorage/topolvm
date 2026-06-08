@@ -21,10 +21,10 @@ import (
 // between the topolvm-node controller (which builds the pod) and the
 // topolvm-snapshotter image (which interprets the flags).
 
-func vsClass(name, namespace string) *snapshot_api.VolumeSnapshotClass {
+func vsClass(namespace string) *snapshot_api.VolumeSnapshotClass {
 	return &snapshot_api.VolumeSnapshotClass{
 		Parameters: map[string]string{
-			SnapshotStorageName:      name,
+			SnapshotStorageName:      "backup-store",
 			SnapshotStorageNamespace: namespace,
 		},
 	}
@@ -45,7 +45,7 @@ func TestBuildSnapshotArgs(t *testing.T) {
 			e: &SnapshotExecutor{
 				logicalVolume: lv,
 				targetPVCInfo: types.NamespacedName{Namespace: "app", Name: "data"},
-				vsClass:       vsClass("backup-store", "topolvm-system"),
+				vsClass:       vsClass("topolvm-system"),
 				namespace:     "topolvm-system",
 			},
 			want: []string{
@@ -63,7 +63,7 @@ func TestBuildSnapshotArgs(t *testing.T) {
 			e: &SnapshotExecutor{
 				logicalVolume: lv,
 				targetPVCInfo: types.NamespacedName{Namespace: "app", Name: "data"},
-				vsClass:       vsClass("backup-store", ""),
+				vsClass:       vsClass(""),
 				namespace:     "host-ns",
 			},
 			want: []string{
@@ -104,7 +104,7 @@ func TestBuildRestoreArgs(t *testing.T) {
 		lv:            lv,
 		snapshotLV:    snapLV,
 		mountResponse: &mounter.MountResponse{},
-		vsClass:       vsClass("backup-store", "topolvm-system"),
+		vsClass:       vsClass("topolvm-system"),
 		namespace:     "topolvm-system",
 	}
 	got := e.buildRestoreArgs()
@@ -130,7 +130,7 @@ func TestBuildDeleteArgs(t *testing.T) {
 	}
 	e := &DeleteExecutor{
 		lv:        lv,
-		vsClass:   vsClass("backup-store", "topolvm-system"),
+		vsClass:   vsClass("topolvm-system"),
 		namespace: "topolvm-system",
 	}
 	got := e.buildDeleteArgs()

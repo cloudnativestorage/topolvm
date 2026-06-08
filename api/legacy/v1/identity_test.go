@@ -149,8 +149,8 @@ func apiPackageDir(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	// thisFile = .../api/legacy/v1/identity_test.go
-	dir := filepath.Dir(thisFile)             // .../api/legacy/v1
-	dir = filepath.Dir(filepath.Dir(dir))     // .../api
+	dir := filepath.Dir(thisFile)         // .../api/legacy/v1
+	dir = filepath.Dir(filepath.Dir(dir)) // .../api
 	if _, err := os.Stat(filepath.Join(dir, "v1", "constants.go")); err != nil {
 		t.Fatalf("could not locate api/v1/constants.go from %s: %v", dir, err)
 	}

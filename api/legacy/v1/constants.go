@@ -60,9 +60,9 @@ const (
 
 // TypeSnapshotBackupStorageFound indicates whether the referenced SnapshotBackupStorage exists.
 const (
-	TypeSnapshotBackupStorageFound               = "SnapshotBackupStorageFound"
-	ReasonSnapshotBackupStorageFound             = "SnapshotBackupStorageFound"
-	ReasonSnapshotBackupStorageNotFound          = "SnapshotBackupStorageNotFound"
+	TypeSnapshotBackupStorageFound      = "SnapshotBackupStorageFound"
+	ReasonSnapshotBackupStorageFound    = "SnapshotBackupStorageFound"
+	ReasonSnapshotBackupStorageNotFound = "SnapshotBackupStorageNotFound"
 )
 
 // TypeSnapshotBackupExecutorEnsured indicates whether the Snapshot Backup Executor is ensured or not.
