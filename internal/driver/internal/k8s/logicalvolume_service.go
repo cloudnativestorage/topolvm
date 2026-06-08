@@ -298,7 +298,20 @@ func (s *LogicalVolumeService) DeleteVolume(ctx context.Context, volumeID string
 // CreateSnapshot creates a snapshot of existing volume.
 func (s *LogicalVolumeService) CreateSnapshot(ctx context.Context, node, dc, sourceVol, sname,
 	accessType string, snapSize resource.Quantity) (*topolvmv1.LogicalVolume, bool, error) {
-	logger.Info("CreateSnapshot called", "name", sname)
+	return s.CreateSnapshotWithEncryption(ctx, node, dc, sourceVol, sname, accessType, snapSize, nil, "")
+}
+
+// CreateSnapshotWithEncryption is the encryption-aware variant of CreateSnapshot.
+// When encSpec is non-nil and enabled, the snapshot LV is created with the
+// encryption metadata that pins it to a copy of the source EncryptionKey.
+func (s *LogicalVolumeService) CreateSnapshotWithEncryption(
+	ctx context.Context,
+	node, dc, sourceVol, sname, accessType string,
+	snapSize resource.Quantity,
+	encSpec *topolvmv1.EncryptionSpec,
+	activeKeyID string,
+) (*topolvmv1.LogicalVolume, bool, error) {
+	logger.Info("CreateSnapshot called", "name", sname, "encrypted", encSpec != nil && encSpec.Enabled)
 	snapshotLV := &topolvmv1.LogicalVolume{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sname,
@@ -312,10 +325,18 @@ func (s *LogicalVolumeService) CreateSnapshot(ctx context.Context, node, dc, sou
 			AccessType:  accessType,
 		},
 	}
+	if encSpec != nil && encSpec.Enabled {
+		snapshotLV.Spec.Encryption = encSpec.DeepCopy()
+	}
 
 	newLV, err := s.createAndWait(ctx, snapshotLV)
 	if err != nil {
 		return nil, false, err
+	}
+	if encSpec != nil && encSpec.Enabled && activeKeyID != "" {
+		if err := s.patchEncryptionStatus(ctx, newLV.Name, activeKeyID); err != nil {
+			return nil, false, err
+		}
 	}
 
 	enable, err := controller.IsOnlineSnapshotEnabled(ctx, s.getter, newLV)
