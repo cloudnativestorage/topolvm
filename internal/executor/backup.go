@@ -54,9 +54,6 @@ func NewSnapshotBackupExecutor(
 
 // Execute creates a snapshot pod that will perform the online snapshot operation.
 func (e *SnapshotExecutor) Execute(ctx context.Context) error {
-	if err := failIfConflictingSnapshotPodExists(ctx, e.client, topolvmv1.OperationBackup, e.logicalVolume); err != nil {
-		return err
-	}
 	objMeta := buildObjectMeta(topolvmv1.OperationBackup, e.logicalVolume)
 	hostPod, err := getHostPod(ctx, e.client)
 	if err != nil {

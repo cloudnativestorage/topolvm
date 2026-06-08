@@ -37,17 +37,6 @@ func NewSnapshotDeleteExecutor(
 
 // Execute creates a delete pod that will perform the snapshot deletion operation.
 func (e *DeleteExecutor) Execute(ctx context.Context) error {
-	// The delete pod runs `restic forget` (or equivalent) against the remote
-	// repository, which requires a snapshot handle that lives on
-	// Status.Snapshot. Without it the pod would launch with empty args, exit
-	// non-zero, and leave the remote snapshot orphaned. Fail fast instead so
-	// the caller can surface a clear error.
-	if e.lv.Status.Snapshot == nil {
-		return fmt.Errorf("cannot start Delete pod for LV %s: no Status.Snapshot recorded", e.lv.Name)
-	}
-	if err := failIfConflictingSnapshotPodExists(ctx, e.client, topolvmv1.OperationDelete, e.lv); err != nil {
-		return err
-	}
 	objMeta := buildObjectMeta(topolvmv1.OperationDelete, e.lv)
 	hostPod, err := getHostPod(ctx, e.client)
 	if err != nil {
@@ -156,6 +145,7 @@ func (e *DeleteExecutor) buildDeleteArgs() []string {
 		fmt.Sprintf("--snapshot-storage-name=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageName])),
 		fmt.Sprintf("--snapshot-storage-namespace=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageNamespace])),
 	}
+
 }
 
 // buildDeleteEnv constructs the environment variables for the delete container.
