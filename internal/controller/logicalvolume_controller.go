@@ -345,10 +345,27 @@ func (r *LogicalVolumeReconciler) deletionWithoutSnapshot(ctx context.Context, l
 }
 
 func (r *LogicalVolumeReconciler) removeFinalizer(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume) (ctrl.Result, error) {
-	lv2 := lv.DeepCopy()
-	controllerutil.RemoveFinalizer(lv2, topolvm.GetLogicalVolumeFinalizer())
-	patch := client.MergeFrom(lv)
-	if err := r.client.Patch(ctx, lv2, patch); err != nil {
+	// Re-Get the LV before computing the patch. Upstream callers in the
+	// deletion path (deleteSnapshotPodAndUnMount, removeLVIfExists, status
+	// updates from snapshot_handler helpers) may have mutated the API object
+	// or the in-memory `lv` between Reconcile and here. Using a stale `lv` as
+	// the MergeFrom base would compute the diff against the wrong state and
+	// could drop or revert fields silently.
+	fresh := &topolvmv1.LogicalVolume{}
+	if err := r.client.Get(ctx, client.ObjectKeyFromObject(lv), fresh); err != nil {
+		if apierrs.IsNotFound(err) {
+			// Object is gone; nothing to do.
+			return ctrl.Result{}, nil
+		}
+		log.Error(err, "failed to re-fetch LogicalVolume before removing finalizer", "name", lv.Name)
+		return ctrl.Result{}, err
+	}
+	if !controllerutil.ContainsFinalizer(fresh, topolvm.GetLogicalVolumeFinalizer()) {
+		return ctrl.Result{}, nil
+	}
+	patched := fresh.DeepCopy()
+	controllerutil.RemoveFinalizer(patched, topolvm.GetLogicalVolumeFinalizer())
+	if err := r.client.Patch(ctx, patched, client.MergeFrom(fresh)); err != nil {
 		log.Error(err, "failed to remove finalizer", "name", lv.Name)
 		return ctrl.Result{}, err
 	}
