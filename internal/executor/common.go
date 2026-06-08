@@ -65,6 +65,29 @@ func buildAnnotations(lv *topolvmv1.LogicalVolume) map[string]string {
 	return annotations
 }
 
+// buildPrivilegedSecurityContext returns the security context used by snapshot
+// executor pods that mount the LV device via hostPath (backup and restore).
+// Privileged is required to perform the bind mount inside the container;
+// it already grants all capabilities, so no Capabilities.Add list is needed.
+func buildPrivilegedSecurityContext() *corev1.SecurityContext {
+	privileged := true
+	return &corev1.SecurityContext{
+		Privileged: &privileged,
+	}
+}
+
+// buildUnprivilegedSecurityContext returns the security context used by the
+// snapshot delete executor, which only talks to remote storage and does not
+// touch any local device.
+func buildUnprivilegedSecurityContext() *corev1.SecurityContext {
+	privileged := false
+	allowPrivilegeEscalation := false
+	return &corev1.SecurityContext{
+		Privileged:               &privileged,
+		AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+	}
+}
+
 func getHostPod(ctx context.Context, rClient client.Client) (*corev1.Pod, error) {
 	hostPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

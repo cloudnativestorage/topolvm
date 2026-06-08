@@ -252,15 +252,7 @@ func (e *SnapshotExecutor) buildSnapshotEnv() []corev1.EnvVar {
 
 // buildSecurityContext creates an appropriate security context for the snapshot container.
 func (e *SnapshotExecutor) buildSecurityContext() *corev1.SecurityContext {
-	privileged := true
-	return &corev1.SecurityContext{
-		Privileged: &privileged,
-		Capabilities: &corev1.Capabilities{
-			Add: []corev1.Capability{
-				"SYS_ADMIN",
-			},
-		},
-	}
+	return buildPrivilegedSecurityContext()
 }
 
 // buildResourceRequirements defines resource requests and limits for the snapshot container.

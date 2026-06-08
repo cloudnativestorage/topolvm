@@ -175,10 +175,7 @@ func (e *RestoreExecutor) buildRestoreEnv() []corev1.EnvVar {
 }
 
 func (e *RestoreExecutor) buildSecurityContext() *corev1.SecurityContext {
-	privileged := true
-	return &corev1.SecurityContext{
-		Privileged: &privileged,
-	}
+	return buildPrivilegedSecurityContext()
 }
 
 func (e *RestoreExecutor) buildResourceRequirements() corev1.ResourceRequirements {

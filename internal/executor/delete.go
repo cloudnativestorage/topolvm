@@ -161,10 +161,7 @@ func (e *DeleteExecutor) buildDeleteEnv() []corev1.EnvVar {
 }
 
 func (e *DeleteExecutor) buildSecurityContext() *corev1.SecurityContext {
-	privileged := false
-	return &corev1.SecurityContext{
-		Privileged: &privileged,
-	}
+	return buildUnprivilegedSecurityContext()
 }
 
 func (e *DeleteExecutor) buildResourceRequirements() corev1.ResourceRequirements {
