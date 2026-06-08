@@ -74,7 +74,9 @@ rules:
 - apiGroups:
   - topolvm.io
   resources:
+  - encryptionkeys
   - logicalvolumes
+  - reencryptrequests
   verbs:
   - create
   - delete
@@ -86,7 +88,9 @@ rules:
 - apiGroups:
   - topolvm.io
   resources:
+  - encryptionkeys/status
   - logicalvolumes/status
+  - reencryptrequests/status
   - snapshotbackupstorages/status
   verbs:
   - get
