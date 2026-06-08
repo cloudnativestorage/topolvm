@@ -558,14 +558,14 @@ func (r *LogicalVolumeReconciler) expandLV(ctx context.Context, log logr.Logger,
 	}()
 
 	if err != nil {
-		if err2 := r.client.Status().Update(ctx, lv); err2 != nil {
+		if err2 := updateLVStatus(ctx, r.client, lv); err2 != nil {
 			// err2 is logged but not returned because err is more important
 			log.Error(err2, "failed to update status", "name", lv.Name, "uid", lv.UID)
 		}
 		return err
 	}
 
-	if err := r.client.Status().Update(ctx, lv); err != nil {
+	if err := updateLVStatus(ctx, r.client, lv); err != nil {
 		log.Error(err, "failed to update status", "name", lv.Name, "uid", lv.UID)
 		return err
 	}
