@@ -1,0 +1,11 @@
+apiVersion: topolvm.io/v1
+kind: ReencryptRequest
+metadata:
+  name: rotate-pci-2026q3
+spec:
+  selector:
+    matchLabels:
+      compliance: pci
+  reason: annual-key-rotation
+  maxConcurrentPerNode: 1
+  throughputLimit: "50MiB/s"
