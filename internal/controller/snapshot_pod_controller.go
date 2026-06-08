@@ -140,12 +140,6 @@ func isExecutorPodMissingOrFailed(podFound bool, pod *corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodFailed
 }
 
-func phaseChangedToFailed(oldLV, newLV *topolvmv1.LogicalVolume) bool {
-	oldFailed := oldLV.Status.Snapshot != nil && oldLV.Status.Snapshot.Phase == topolvmv1.OperationPhaseFailed
-	newFailed := newLV.Status.Snapshot != nil && newLV.Status.Snapshot.Phase == topolvmv1.OperationPhaseFailed
-	return !oldFailed && newFailed
-}
-
 func splitSnapshotPodName(podName string) (string, topolvmv1.OperationType, bool) {
 	for _, op := range []topolvmv1.OperationType{topolvmv1.OperationBackup, topolvmv1.OperationRestore, topolvmv1.OperationDelete} {
 		prefix := strings.ToLower(string(op)) + "-"

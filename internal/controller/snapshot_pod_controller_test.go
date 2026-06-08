@@ -86,37 +86,6 @@ func TestSplitSnapshotPodName(t *testing.T) {
 	}
 }
 
-func TestPhaseChangedToFailed(t *testing.T) {
-	makeLV := func(phase topolvmv1.OperationPhase) *topolvmv1.LogicalVolume {
-		lv := &topolvmv1.LogicalVolume{}
-		if phase != "" {
-			lv.Status.Snapshot = &topolvmv1.SnapshotStatus{Phase: phase}
-		}
-		return lv
-	}
-
-	cases := []struct {
-		name string
-		oldL *topolvmv1.LogicalVolume
-		newL *topolvmv1.LogicalVolume
-		want bool
-	}{
-		{"running to failed", makeLV(topolvmv1.OperationPhaseRunning), makeLV(topolvmv1.OperationPhaseFailed), true},
-		{"pending to failed", makeLV(topolvmv1.OperationPhasePending), makeLV(topolvmv1.OperationPhaseFailed), true},
-		{"no status to failed", makeLV(""), makeLV(topolvmv1.OperationPhaseFailed), true},
-		{"failed to failed (idempotent)", makeLV(topolvmv1.OperationPhaseFailed), makeLV(topolvmv1.OperationPhaseFailed), false},
-		{"running to running", makeLV(topolvmv1.OperationPhaseRunning), makeLV(topolvmv1.OperationPhaseRunning), false},
-		{"running to succeeded", makeLV(topolvmv1.OperationPhaseRunning), makeLV(topolvmv1.OperationPhaseSucceeded), false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := phaseChangedToFailed(tc.oldL, tc.newL); got != tc.want {
-				t.Errorf("phaseChangedToFailed = %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
 func TestSnapshotPodPredicate(t *testing.T) {
 	snapshotPod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
