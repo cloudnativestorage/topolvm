@@ -129,9 +129,6 @@ func (e *DeleteExecutor) buildDeleteContainer(templateContainer *corev1.Containe
 	return container
 }
 
-// buildDeleteArgs assumes Execute has already validated that
-// e.lv.Status.Snapshot is non-nil; that check lives at the Execute entry
-// point so a missing snapshot fails before any pod gets created.
 func (e *DeleteExecutor) buildDeleteArgs() []string {
 	defaultNamespaceIfEmpty := func(name string) string {
 		if name == "" {
