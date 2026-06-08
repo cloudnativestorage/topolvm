@@ -81,7 +81,7 @@ rules:
     - ""
   resources:
     - secrets
-  verbs: ["get", "list", "create", "patch", "watch", "delete"]
+  verbs: ["get", "list", "watch"]
 ---
 # Copied from https://github.com/kubernetes-csi/external-provisioner/blob/master/deploy/kubernetes/rbac.yaml
 kind: ClusterRole
