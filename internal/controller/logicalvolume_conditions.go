@@ -17,8 +17,7 @@ func setSnapshotBackupStorageFoundToTrue(ctx context.Context, c client.Client, l
 		Reason:  topolvmv1.ReasonSnapshotBackupStorageFound,
 		Message: "SnapshotBackupStorage exists and is accessible.",
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, c, lv)
+	return updateLVStatusCondition(ctx, c, lv, newCond)
 }
 
 func setSnapshotBackupStorageFoundToFalse(ctx context.Context, c client.Client, lv *topolvmv1.LogicalVolume, err error) error {
@@ -28,8 +27,7 @@ func setSnapshotBackupStorageFoundToFalse(ctx context.Context, c client.Client, 
 		Reason:  topolvmv1.ReasonSnapshotBackupStorageNotFound,
 		Message: fmt.Sprintf("SnapshotBackupStorage not found: %q", err.Error()),
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, c, lv)
+	return updateLVStatusCondition(ctx, c, lv, newCond)
 }
 
 func setSnapshotBackupExecutorEnsuredToTrue(ctx context.Context, client client.Client, lv *topolvmv1.LogicalVolume) error {
@@ -39,8 +37,7 @@ func setSnapshotBackupExecutorEnsuredToTrue(ctx context.Context, client client.C
 		Reason:  topolvmv1.ReasonSuccessfullyEnsuredSnapshotBackupExecutor,
 		Message: "Snapshot Backup Executor has been ensured successfully.",
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func setSnapshotBackupExecutorEnsuredToFalse(ctx context.Context, client client.Client, lv *topolvmv1.LogicalVolume, err error) error {
@@ -50,8 +47,7 @@ func setSnapshotBackupExecutorEnsuredToFalse(ctx context.Context, client client.
 		Reason:  topolvmv1.ReasonFailedToEnsureSnapshotBackupExecutor,
 		Message: fmt.Sprintf("Failed to ensure Snapshot Backup Executor: %q", err.Error()),
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func hasSnapshotBackupExecutorCondition(lv *topolvmv1.LogicalVolume) bool {
@@ -66,8 +62,7 @@ func setSnapshotRestoreExecutorEnsuredToTrue(ctx context.Context, client client.
 		Reason:  topolvmv1.ReasonSuccessfullyEnsuredSnapshotRestoreExecutor,
 		Message: "Snapshot Restore Executor has been ensured successfully.",
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func setSnapshotRestoreExecutorEnsuredToFalse(ctx context.Context, client client.Client, lv *topolvmv1.LogicalVolume, err error) error {
@@ -77,8 +72,7 @@ func setSnapshotRestoreExecutorEnsuredToFalse(ctx context.Context, client client
 		Reason:  topolvmv1.ReasonFailedToEnsureSnapshotRestoreExecutor,
 		Message: fmt.Sprintf("Failed to ensure Snapshot Restore Executor: %q", err.Error()),
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func hasSnapshotRestoreExecutorCondition(lv *topolvmv1.LogicalVolume) bool {
@@ -104,8 +98,7 @@ func setSnapshotExecutorCleanupToTrue(ctx context.Context, client client.Client,
 			Message: "Snapshot Restore Executor has been cleaned successfully.",
 		}
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func setSnapshotExecutorCleanupToFalse(ctx context.Context, client client.Client, operation topolvmv1.OperationType, lv *topolvmv1.LogicalVolume, err error) error {
@@ -126,8 +119,7 @@ func setSnapshotExecutorCleanupToFalse(ctx context.Context, client client.Client
 			Message: fmt.Sprintf("Failed to clean Snapshot Restore Executor: %q", err.Error()),
 		}
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func setSnapshotDeleteExecutorEnsuredToTrue(ctx context.Context, client client.Client, lv *topolvmv1.LogicalVolume) error {
@@ -137,8 +129,7 @@ func setSnapshotDeleteExecutorEnsuredToTrue(ctx context.Context, client client.C
 		Reason:  topolvmv1.ReasonSuccessfullyEnsuredSnapshotDeleteExecutor,
 		Message: "Snapshot Delete Executor has been ensured successfully.",
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func setSnapshotDeleteExecutorEnsuredToFalse(ctx context.Context, client client.Client, lv *topolvmv1.LogicalVolume, err error) error {
@@ -148,8 +139,7 @@ func setSnapshotDeleteExecutorEnsuredToFalse(ctx context.Context, client client.
 		Reason:  topolvmv1.ReasonFailedToEnsureSnapshotDeleteExecutor,
 		Message: fmt.Sprintf("Failed to ensure Snapshot Delete Executor: %q", err.Error()),
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func hasSnapshotDeleteExecutorCondition(lv *topolvmv1.LogicalVolume) bool {
@@ -189,8 +179,7 @@ func setLVMSnapshotCleanedToTrue(ctx context.Context, client client.Client, lv *
 		Reason:  topolvmv1.ReasonSuccessfullyCleanedLVMSnapshot,
 		Message: "LVM snapshot volume has been removed successfully after backup completion.",
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func setLVMSnapshotCleanedToFalse(ctx context.Context, client client.Client, lv *topolvmv1.LogicalVolume, err error) error {
@@ -200,8 +189,7 @@ func setLVMSnapshotCleanedToFalse(ctx context.Context, client client.Client, lv 
 		Reason:  topolvmv1.ReasonFailedToCleanLVMSnapshot,
 		Message: fmt.Sprintf("Failed to clean LVM snapshot: %q", err.Error()),
 	}
-	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
-	return updateLVStatusCondition(ctx, client, lv)
+	return updateLVStatusCondition(ctx, client, lv, newCond)
 }
 
 func hasLVMSnapshotCleanupCondition(lv *topolvmv1.LogicalVolume) bool {
@@ -224,8 +212,13 @@ func updateLVStatus(ctx context.Context, kClient client.Client, lv *topolvmv1.Lo
 	return nil
 }
 
-func updateLVStatusCondition(ctx context.Context, kClient client.Client, lv *topolvmv1.LogicalVolume) error {
-	// Refresh the LogicalVolume to get the latest version
+// updateLVStatusCondition re-fetches the LV, applies `cond` on top of the
+// currently-stored Conditions slice via meta.SetStatusCondition, and Updates
+// the status subresource. The previous implementation wholesale-replaced
+// freshLV.Status.Conditions with the in-memory slice, which silently dropped
+// any condition another reconciler (or another helper in the same reconcile)
+// wrote between the original Reconcile-time Get and this call.
+func updateLVStatusCondition(ctx context.Context, kClient client.Client, lv *topolvmv1.LogicalVolume, cond metav1.Condition) error {
 	freshLV := &topolvmv1.LogicalVolume{}
 	if err := kClient.Get(ctx, client.ObjectKeyFromObject(lv), freshLV); err != nil {
 		return fmt.Errorf("failed to get latest LogicalVolume: %w", err)
@@ -235,7 +228,7 @@ func updateLVStatusCondition(ctx context.Context, kClient client.Client, lv *top
 			StartTime: metav1.Now(),
 		}
 	}
-	freshLV.Status.Conditions = lv.Status.Conditions
+	meta.SetStatusCondition(&freshLV.Status.Conditions, cond)
 	if err := kClient.Status().Update(ctx, freshLV); err != nil {
 		return fmt.Errorf("failed to update snapshot status: %w", err)
 	}
