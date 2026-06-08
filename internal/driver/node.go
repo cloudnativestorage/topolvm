@@ -414,6 +414,23 @@ func (s *nodeServerNoLocked) NodeUnpublishVolume(ctx context.Context, req *csi.N
 	return &csi.NodeUnpublishVolumeResponse{}, nil
 }
 
+// resizeEncryptedMapping grows the dm-crypt mapping for an encrypted volume.
+// Must be called after the ciphertext LV has been extended (controller-side
+// ExpandVolume + lvmd lvextend) and before the filesystem is resized on the
+// mapper device.
+func (s *nodeServerNoLocked) resizeEncryptedMapping(ctx context.Context, lvr *topolvmv1.LogicalVolume) error {
+	if s.encryption == nil || !s.encryption.enabled() {
+		return fmt.Errorf("encrypted volume %s requires encryption support but topolvm-node was not started with --encryption-enabled", lvr.Status.VolumeID)
+	}
+	rk, err := s.encryption.unwrap(ctx, lvr)
+	if err != nil {
+		return err
+	}
+	defer rk.pass.Destroy()
+	dm := dmName(lvr.Status.VolumeID)
+	return s.encryption.crypt.Resize(ctx, dm, rk.pass)
+}
+
 // closeEncryptedIfAny closes the dm-crypt mapping for volumeID if the LV is
 // encrypted and the mapping is currently open. Returns nil when there is
 // nothing to do (legacy unencrypted volume or no open mapping).
@@ -582,6 +599,16 @@ func (s *nodeServerNoLocked) NodeExpandVolume(ctx context.Context, req *csi.Node
 	}
 	if lv == nil {
 		return nil, status.Errorf(codes.NotFound, "failed to find LV: %s", volumeID)
+	}
+
+	// For encrypted volumes, grow the dm-crypt mapping before the
+	// filesystem; the resize2fs/xfs_growfs that follows targets the
+	// mapper device, not the ciphertext LV.
+	if lvr != nil && lvr.Spec.Encryption != nil && lvr.Spec.Encryption.Enabled {
+		if err := s.resizeEncryptedMapping(ctx, lvr); err != nil {
+			return nil, status.Errorf(codes.Internal, "encryption resize failed: %v", err)
+		}
+		lv.Path = crypt.MapperPath(dmName(volumeID))
 	}
 
 	args := []string{"-o", "source", "--noheadings", "--target", req.GetVolumePath()}
