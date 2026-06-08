@@ -156,7 +156,22 @@ func NewLogicalVolumeService(mgr manager.Manager) (*LogicalVolumeService, error)
 
 // CreateVolume creates volume
 func (s *LogicalVolumeService) CreateVolume(ctx context.Context, node, dc, oc, name, sourceName string, requestBytes int64) (*topolvmv1.LogicalVolume, error) {
-	logger.Info("k8s.CreateVolume called", "name", name, "node", node, "size", requestBytes, "sourceName", sourceName)
+	return s.CreateVolumeWithEncryption(ctx, node, dc, oc, name, sourceName, requestBytes, nil, "")
+}
+
+// CreateVolumeWithEncryption is the encryption-aware variant of CreateVolume.
+// When encSpec is non-nil and enabled, the LogicalVolume is created with the
+// spec populated and the status seeded so the node can resolve the key on
+// first publish. activeKeyID names the EncryptionKey object that the
+// controller has already created (or will create alongside this LV).
+func (s *LogicalVolumeService) CreateVolumeWithEncryption(
+	ctx context.Context,
+	node, dc, oc, name, sourceName string,
+	requestBytes int64,
+	encSpec *topolvmv1.EncryptionSpec,
+	activeKeyID string,
+) (*topolvmv1.LogicalVolume, error) {
+	logger.Info("k8s.CreateVolume called", "name", name, "node", node, "size", requestBytes, "sourceName", sourceName, "encrypted", encSpec != nil && encSpec.Enabled)
 	var lv *topolvmv1.LogicalVolume
 	// if the create volume request has no source, proceed with regular lv creation.
 	if sourceName == "" {
@@ -191,7 +206,41 @@ func (s *LogicalVolumeService) CreateVolume(ctx context.Context, node, dc, oc, n
 		}
 	}
 
-	return s.createAndWait(ctx, lv)
+	if encSpec != nil && encSpec.Enabled {
+		lv.Spec.Encryption = encSpec.DeepCopy()
+	}
+
+	created, err := s.createAndWait(ctx, lv)
+	if err != nil {
+		return nil, err
+	}
+	if encSpec != nil && encSpec.Enabled && activeKeyID != "" {
+		if err := s.patchEncryptionStatus(ctx, created.Name, activeKeyID); err != nil {
+			return nil, err
+		}
+	}
+	return created, nil
+}
+
+// patchEncryptionStatus initializes lv.status.encryption with the active key id
+// so the node knows which EncryptionKey to consume at first publish.
+func (s *LogicalVolumeService) patchEncryptionStatus(ctx context.Context, lvName, activeKeyID string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var lv topolvmv1.LogicalVolume
+		if err := s.getter.Get(ctx, client.ObjectKey{Name: lvName}, &lv); err != nil {
+			return err
+		}
+		if lv.Status.Encryption == nil {
+			lv.Status.Encryption = &topolvmv1.EncryptionStatus{}
+		}
+		if lv.Status.Encryption.State == "" {
+			lv.Status.Encryption.State = topolvmv1.EncryptionPending
+		}
+		if lv.Status.Encryption.ActiveKeyID == "" {
+			lv.Status.Encryption.ActiveKeyID = activeKeyID
+		}
+		return s.writer.Status().Update(ctx, &lv)
+	})
 }
 
 // DeleteVolume deletes volume
