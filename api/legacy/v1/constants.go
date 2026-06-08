@@ -58,6 +58,13 @@ const (
 	OperationPhaseFailed OperationPhase = "Failed"
 )
 
+// TypeSnapshotBackupStorageFound indicates whether the referenced SnapshotBackupStorage exists.
+const (
+	TypeSnapshotBackupStorageFound      = "SnapshotBackupStorageFound"
+	ReasonSnapshotBackupStorageFound    = "SnapshotBackupStorageFound"
+	ReasonSnapshotBackupStorageNotFound = "SnapshotBackupStorageNotFound"
+)
+
 // TypeSnapshotBackupExecutorEnsured indicates whether the Snapshot Backup Executor is ensured or not.
 const (
 	TypeSnapshotBackupExecutorEnsured               = "SnapshotBackupExecutorEnsured"
