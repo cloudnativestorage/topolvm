@@ -56,6 +56,18 @@ func (r *SnapshotPodReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, fmt.Errorf("failed to get LogicalVolume %s: %w", lvName, err)
 	}
 
+	// When the LV is itself being torn down, the LogicalVolumeReconciler
+	// deletes the executor pod as part of deletionWithoutSnapshot. That
+	// triggers this reconciler with podFound=false; writing a "failed"
+	// snapshot status onto an LV that's already in DeletionTimestamp races
+	// the finalizer removal and produces misleading status data plus event
+	// noise for an operation that was simply preempted by deletion.
+	if !lv.DeletionTimestamp.IsZero() {
+		lg.Info("skipping snapshot-failed status update; LV is being deleted",
+			"lv", lv.Name, "operation", operation, "pod", req.NamespacedName)
+		return ctrl.Result{}, nil
+	}
+
 	var reason string
 	if !podFound {
 		reason = fmt.Sprintf("%s executor pod was deleted before the operation completed", operation)
