@@ -126,6 +126,8 @@ func subMain() error {
 		return err
 	}
 
+	// We register the EncryptionKey reconciler later, once kp is built.
+
 	//+kubebuilder:scaffold:builder
 
 	// Add health checker to manager
@@ -155,6 +157,10 @@ func subMain() error {
 			return fmt.Errorf("initialize key provider %q: %w", config.keyProviderName, err)
 		}
 		setupLog.Info("encryption enabled", "provider", config.keyProviderName)
+		if err := controller.SetupEncryptionKeyReconciler(mgr, client, kp, 0); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "EncryptionKey")
+			return err
+		}
 	}
 	controllerSever, err := driver.NewControllerServerWithEncryption(mgr, config.controllerServerSettings, kp)
 	if err != nil {
