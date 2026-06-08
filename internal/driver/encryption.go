@@ -2,6 +2,7 @@ package driver
 
 import (
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -11,6 +12,13 @@ import (
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
 	"github.com/topolvm/topolvm/internal/crypt"
 )
+
+// base64DecodeStored decodes the WrappedDEK string we persist on
+// EncryptionKey.status. Centralized here so the encoding stays consistent
+// between controller-side write and node-side read paths.
+func base64DecodeStored(s string) ([]byte, error) {
+	return base64.StdEncoding.DecodeString(s)
+}
 
 // parseEncryptionParameters reads the encryption-related StorageClass
 // parameters from a CreateVolume request and returns an EncryptionSpec when
