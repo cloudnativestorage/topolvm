@@ -124,6 +124,67 @@ func (e *encryptionCoordinator) openOrFormat(ctx context.Context, lv *topolvmv1.
 	return crypt.MapperPath(dm), nil
 }
 
+// RotateKeyslot performs an online passphrase rotation on an open or openable
+// LUKS device. It adds a new keyslot bound to a freshly generated DEK,
+// persists a new EncryptionKey CR, retires the previous slot, and finally
+// kills the old one. Pre-rotation snapshots remain readable through their
+// own pinned EncryptionKey copies.
+func (e *encryptionCoordinator) RotateKeyslot(ctx context.Context, lv *topolvmv1.LogicalVolume, devicePath string) error {
+	if !e.enabled() {
+		return errors.New("encryption coordinator not configured")
+	}
+	old, err := e.unwrap(ctx, lv)
+	if err != nil {
+		return err
+	}
+	defer old.pass.Destroy()
+
+	// Generate a fresh DEK and persist a new EncryptionKey CR before
+	// touching the on-disk header so a crash leaves the old key still
+	// usable.
+	newPlain, newWrapped, err := e.keyProvider.GenerateDEK(ctx, keyprovider.KeyOpts{VolumeID: lv.Status.VolumeID, KeyRef: lv.Spec.Encryption.KeyRef})
+	if err != nil {
+		return fmt.Errorf("generate new DEK: %w", err)
+	}
+	defer newPlain.Destroy()
+
+	newKeyName := fmt.Sprintf("vk-rot-%s", shortHash(fmt.Sprintf("%s-%d", lv.Status.VolumeID, lv.Status.Encryption.Keyslot+1)))
+	if _, err := e.encKeys.Create(ctx, newKeyName, lv.Spec.Encryption.Provider, lv.Spec.Encryption.KeyRef, lv.Status.VolumeID, newWrapped.Ciphertext, newWrapped.KEKVersion, 0, []string{lv.Status.VolumeID}); err != nil {
+		return fmt.Errorf("create rotated EncryptionKey: %w", err)
+	}
+
+	slot, err := e.crypt.AddKey(ctx, devicePath, old.pass, newPlain)
+	if err != nil {
+		return fmt.Errorf("luksAddKey: %w", err)
+	}
+
+	// Switch the LV to the new key before killing the old slot so a
+	// concurrent unwrap on this node uses the new blob.
+	if err := e.patchEncryptionStatus(ctx, lv.Name, func(es *topolvmv1.EncryptionStatus) {
+		es.ActiveKeyID = newKeyName
+		es.Keyslot = int32(slot)
+	}); err != nil {
+		return err
+	}
+
+	if err := e.crypt.KillSlot(ctx, devicePath, int(old.keyslot), newPlain); err != nil {
+		return fmt.Errorf("luksKillSlot: %w", err)
+	}
+	// Best-effort retire the old key: drop its consumer if no snapshot pins it.
+	if err := e.encKeys.RemoveConsumer(ctx, old.keyID, lv.Status.VolumeID); err != nil {
+		return fmt.Errorf("retire old EncryptionKey consumer: %w", err)
+	}
+	if err := e.encKeys.MaybeDelete(ctx, old.keyID); err != nil {
+		return fmt.Errorf("garbage-collect old EncryptionKey: %w", err)
+	}
+	return nil
+}
+
+func shortHash(s string) string {
+	h := sha1.Sum([]byte(s))
+	return hex.EncodeToString(h[:6])
+}
+
 // close releases the dm-crypt mapping if it is open.
 func (e *encryptionCoordinator) close(ctx context.Context, volumeID string) error {
 	dm := dmName(volumeID)
