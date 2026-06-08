@@ -160,11 +160,22 @@ func subMain(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("initialize key provider %q: %w", config.keyProviderName, err)
 		}
+		cm := crypt.NewManager(config.cryptsetupPath)
 		encDeps = &driver.EncryptionDeps{
-			CryptManager: crypt.NewManager(config.cryptsetupPath),
+			CryptManager: cm,
 			KeyProvider:  kp,
 		}
-		setupLog.Info("encryption enabled", "provider", config.keyProviderName, "cryptsetup", config.cryptsetupPath)
+		// Node-side worker that runs cryptsetup reencrypt when an LV
+		// transitions to state=Reencrypting. It resolves devicePath
+		// from the LV's volumeID using the legacy /dev/topolvm/<uuid>
+		// layout that lvmd produces.
+		if err := controller.SetupLVReencryptWorker(mgr, cm, kp, nodename, config.reencryptMaxConcurrentPerNode, func(volumeID string) string {
+			return topolvm.LegacyDeviceDirectory + "/" + volumeID
+		}); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "LVReencryptWorker")
+			return err
+		}
+		setupLog.Info("encryption enabled", "provider", config.keyProviderName, "cryptsetup", config.cryptsetupPath, "reencryptMaxPerNode", config.reencryptMaxConcurrentPerNode)
 	}
 	nodeServer, err := driver.NewNodeServerWithEncryption(nodename, vgService, lvService, mgr, encDeps)
 	if err != nil {
