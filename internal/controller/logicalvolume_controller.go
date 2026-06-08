@@ -36,6 +36,13 @@ type LogicalVolumeReconciler struct {
 //+kubebuilder:rbac:groups=topolvm.io,resources=logicalvolumes,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=topolvm.io,resources=logicalvolumes/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=topolvm.io,resources=snapshotbackupstorages,verbs=get;list;watch
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;delete
+//+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
+//+kubebuilder:rbac:groups=core,resources=persistentvolumes,verbs=get;list;watch
+//+kubebuilder:rbac:groups=apps,resources=daemonsets,verbs=get;list;watch
+//+kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshots,verbs=get;list;watch
+//+kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshotcontents,verbs=get;list;watch
+//+kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshotclasses,verbs=get;list;watch
 
 func NewLogicalVolumeReconcilerWithServices(client client.Client, nodeName string, vgService proto.VGServiceClient, lvService proto.LVServiceClient) *LogicalVolumeReconciler {
 	r := &LogicalVolumeReconciler{

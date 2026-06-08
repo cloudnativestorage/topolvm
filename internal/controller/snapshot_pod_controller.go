@@ -17,6 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
+
 type SnapshotPodReconciler struct {
 	client client.Client
 }

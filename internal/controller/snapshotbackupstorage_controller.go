@@ -27,6 +27,7 @@ func NewSnapshotBackupStorageReconciler(client client.Client) *SnapshotBackupSto
 
 //+kubebuilder:rbac:groups=topolvm.io,resources=snapshotbackupstorages,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=topolvm.io,resources=snapshotbackupstorages/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch
 
 // Reconcile SnapshotBackupStorage
 func (r *SnapshotBackupStorageReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
