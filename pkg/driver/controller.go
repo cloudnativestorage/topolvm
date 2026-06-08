@@ -8,6 +8,10 @@ import (
 // It allows starting a new controller server even without access to the package internals.
 var NewControllerServer = internalDriver.NewControllerServer
 
+// NewControllerServerWithEncryption is an externally consumable wrapper that
+// allows wiring an optional KeyProvider used for transparent data encryption.
+var NewControllerServerWithEncryption = internalDriver.NewControllerServerWithEncryption
+
 // ControllerServerSettings is an externally consumable wrapper.
 // It is used to configure the controller server.
 type ControllerServerSettings = internalDriver.ControllerServerSettings
