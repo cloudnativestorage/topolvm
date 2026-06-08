@@ -161,6 +161,10 @@ func subMain() error {
 			setupLog.Error(err, "unable to create controller", "controller", "EncryptionKey")
 			return err
 		}
+		if err := controller.SetupReencryptRequestReconciler(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "ReencryptRequest")
+			return err
+		}
 	}
 	controllerSever, err := driver.NewControllerServerWithEncryption(mgr, config.controllerServerSettings, kp)
 	if err != nil {

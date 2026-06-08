@@ -26,10 +26,11 @@ var config struct {
 	profilingBindAddress string
 
 	// Encryption (TDE) configuration. Disabled unless --encryption-enabled is true.
-	encryptionEnabled bool
-	keyProviderName   string
-	keyProviderConfig string
-	cryptsetupPath    string
+	encryptionEnabled            bool
+	keyProviderName              string
+	keyProviderConfig            string
+	cryptsetupPath               string
+	reencryptMaxConcurrentPerNode int
 }
 
 var rootCmd = &cobra.Command{
@@ -73,6 +74,7 @@ func init() {
 	fs.StringVar(&config.keyProviderName, "key-provider", "", "KeyProvider name to use when encryption is enabled (vault|aws-kms|gcp-kms|azure-kv|pkcs11|fake).")
 	fs.StringVar(&config.keyProviderConfig, "key-provider-config", "", "Path to the provider-specific config file. Must contain no secret material.")
 	fs.StringVar(&config.cryptsetupPath, "cryptsetup-path", "cryptsetup", "cryptsetup binary path on the host OS.")
+	fs.IntVar(&config.reencryptMaxConcurrentPerNode, "reencrypt-max-concurrent-per-node", 1, "Cap on simultaneous online reencryptions per node.")
 
 	_ = viper.BindEnv("nodename", "NODE_NAME")
 	_ = viper.BindPFlag("nodename", fs.Lookup("nodename"))
