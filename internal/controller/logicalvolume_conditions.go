@@ -10,6 +10,28 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+func setSnapshotBackupStorageFoundToTrue(ctx context.Context, c client.Client, lv *topolvmv1.LogicalVolume) error {
+	newCond := metav1.Condition{
+		Type:    topolvmv1.TypeSnapshotBackupStorageFound,
+		Status:  metav1.ConditionTrue,
+		Reason:  topolvmv1.ReasonSnapshotBackupStorageFound,
+		Message: "SnapshotBackupStorage exists and is accessible.",
+	}
+	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
+	return updateLVStatusCondition(ctx, c, lv)
+}
+
+func setSnapshotBackupStorageFoundToFalse(ctx context.Context, c client.Client, lv *topolvmv1.LogicalVolume, err error) error {
+	newCond := metav1.Condition{
+		Type:    topolvmv1.TypeSnapshotBackupStorageFound,
+		Status:  metav1.ConditionFalse,
+		Reason:  topolvmv1.ReasonSnapshotBackupStorageNotFound,
+		Message: fmt.Sprintf("SnapshotBackupStorage not found: %q", err.Error()),
+	}
+	meta.SetStatusCondition(&lv.Status.Conditions, newCond)
+	return updateLVStatusCondition(ctx, c, lv)
+}
+
 func setSnapshotBackupExecutorEnsuredToTrue(ctx context.Context, client client.Client, lv *topolvmv1.LogicalVolume) error {
 	newCond := metav1.Condition{
 		Type:    topolvmv1.TypeSnapshotBackupExecutorEnsured,

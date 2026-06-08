@@ -17,7 +17,6 @@ limitations under the License.
 package progress
 
 import (
-	"fmt"
 	"time"
 
 	v1 "github.com/topolvm/topolvm/api/v1"
@@ -52,13 +51,11 @@ func (pg *Progress) pollAndSetStatus(repo string) {
 		case <-pg.ctx.Done():
 			return
 		case <-ticker.C:
-			fmt.Println("########### Tick Called for repo:", repo)
 			status, next, err := pg.latestStatus(repo, cursor)
 			if err != nil {
 				klog.Infoln("error getting progress for repo", repo, err)
 				continue
 			}
-			fmt.Println("########## Status:", status)
 			if status == nil {
 				continue
 			}

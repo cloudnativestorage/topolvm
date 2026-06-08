@@ -132,6 +132,13 @@ func (h *snapshotHandler) restoreFromSnapshot(ctx context.Context, log logr.Logg
 		return err
 	}
 
+	if err := h.validateSnapshotStorageExists(ctx); err != nil {
+		return h.handleSnapshotStorageNotFound(ctx, log, lv, topolvmv1.OperationRestore, err)
+	}
+	if err := setSnapshotBackupStorageFoundToTrue(ctx, h.client, lv); err != nil {
+		return fmt.Errorf("failed to set snapshot backup storage found to true: %w", err)
+	}
+
 	// Use bind mount for restore (the pod already mounts LV)
 	mountOptions := []string{}
 	mountResponse, err := h.mountLogicalVolume(ctx, log, lv, mountOptions, topolvmv1.OperationRestore)
@@ -156,6 +163,13 @@ func (h *snapshotHandler) backupSnapshot(ctx context.Context, log logr.Logger, l
 	// Initialize status if needed
 	if err := h.initializeSnapshotStatus(ctx, log, lv, topolvmv1.OperationBackup); err != nil {
 		return err
+	}
+
+	if err := h.validateSnapshotStorageExists(ctx); err != nil {
+		return h.handleSnapshotStorageNotFound(ctx, log, lv, topolvmv1.OperationBackup, err)
+	}
+	if err := setSnapshotBackupStorageFoundToTrue(ctx, h.client, lv); err != nil {
+		return fmt.Errorf("failed to set snapshot backup storage found to true: %w", err)
 	}
 
 	// Mount the logical volume with read-only and no-recovery options
@@ -442,6 +456,46 @@ func failSnapshotOperation(ctx context.Context, c client.Client, lv *topolvmv1.L
 
 	lv.Status = freshLV.Status
 	lv.ResourceVersion = freshLV.ResourceVersion
+	return nil
+}
+
+func (h *snapshotHandler) handleSnapshotStorageNotFound(ctx context.Context, log logr.Logger, lv *topolvmv1.LogicalVolume, operation topolvmv1.OperationType, storageErr error) error {
+	snapshotErr := &topolvmv1.SnapshotError{
+		Code:    "SnapshotStorageNotFound",
+		Message: storageErr.Error(),
+	}
+	if updateErr := h.updateSnapshotOperationStatus(ctx, lv, operation, topolvmv1.OperationPhaseFailed, storageErr.Error(), snapshotErr); updateErr != nil {
+		log.Error(updateErr, "failed to update snapshot status", "name", lv.Name)
+	}
+	if err := setSnapshotBackupStorageFoundToFalse(ctx, h.client, lv, storageErr); err != nil {
+		return fmt.Errorf("failed to set snapshot backup storage found to false: %w", err)
+	}
+	switch operation {
+	case topolvmv1.OperationBackup:
+		if err := setSnapshotBackupExecutorEnsuredToFalse(ctx, h.client, lv, storageErr); err != nil {
+			return fmt.Errorf("failed to set snapshot backup executor ensured to false: %w", err)
+		}
+	case topolvmv1.OperationRestore:
+		if err := setSnapshotRestoreExecutorEnsuredToFalse(ctx, h.client, lv, storageErr); err != nil {
+			return fmt.Errorf("failed to set snapshot restore executor ensured to false: %w", err)
+		}
+	}
+	return nil
+}
+
+func (h *snapshotHandler) validateSnapshotStorageExists(ctx context.Context) error {
+	storageName := h.vsClass.Parameters[SnapshotStorageName]
+	storageNamespace := h.vsClass.Parameters[SnapshotStorageNamespace]
+	if storageNamespace == "" {
+		storageNamespace = executor.GetPodNamespace()
+	}
+	storage := &topolvmv1.SnapshotBackupStorage{}
+	if err := h.client.Get(ctx, client.ObjectKey{Name: storageName, Namespace: storageNamespace}, storage); err != nil {
+		if apierrs.IsNotFound(err) {
+			return fmt.Errorf("snapshot storage %s not found in namespace %s", storageName, storageNamespace)
+		}
+		return fmt.Errorf("failed to get snapshot storage %s/%s: %w", storageNamespace, storageName, err)
+	}
 	return nil
 }
 

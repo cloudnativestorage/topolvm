@@ -92,7 +92,7 @@ func (s *Session) selectCmdStdin(index int, stdin *io.PipeReader) io.Reader {
 func (s *Session) configureCmdOutput(index int, pipeWriters []*io.PipeWriter) (io.Writer, io.Writer) {
 	if s.isLastCommand(index) && len(s.leafCmds) == 0 {
 		if s.enableOutputBuffer {
-			cmdOutput := &SafeBuffer{}
+			cmdOutput := &safeBuffer{}
 			s.lastOutputBuffer = cmdOutput
 			if s.enableErrsBuffer {
 				return cmdOutput, cmdOutput
@@ -148,7 +148,7 @@ func (s *Session) selectLeafCmdStderr() io.Writer {
 
 func (s *Session) selectLeafCmdStdout() io.Writer {
 	if s.enableOutputBuffer {
-		cmdOutput := &SafeBuffer{}
+		cmdOutput := &safeBuffer{}
 		s.leafOutputBuffer = append(s.leafOutputBuffer, cmdOutput)
 		return cmdOutput
 	}
@@ -364,16 +364,16 @@ func (s *Session) resetOutputBuffer() {
 func (s *Session) CurrentOutput(index int) ([]byte, error) {
 	if len(s.leafOutputBuffer) > 0 {
 		if index < 0 || index >= len(s.leafOutputBuffer) {
-			return nil, fmt.Errorf("leaf command index %d out of range [0, %d)", index, len(s.leafOutputBuffer))
+			return nil, fmt.Errorf("index %d out of range [0, %d)", index, len(s.leafOutputBuffer))
 		}
 		return s.leafOutputBuffer[index].Bytes(), nil
 	}
 
 	if s.lastOutputBuffer == nil {
-		return nil, fmt.Errorf("leaf command index %d out of range [0, 0)", index)
+		return nil, fmt.Errorf("no output buffer available; ensure the command was started with buffered output")
 	}
 	if index != 0 {
-		return nil, fmt.Errorf("leaf command index %d out of range [0, 1)", index)
+		return nil, fmt.Errorf("index %d out of range: only index 0 is valid for non-leaf command chains", index)
 	}
 	return s.lastOutputBuffer.Bytes(), nil
 }
