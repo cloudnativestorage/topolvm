@@ -23,7 +23,7 @@ func NewRetryMissingGetter(cacheReader client.Reader, apiReader client.Reader) *
 }
 
 // Get tries cache reader, then if it returns NotFound error, retry direct reader.
-func (r *RetryMissingGetter) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
+func (r *RetryMissingGetter) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	err := r.cacheReader.Get(ctx, key, obj)
 	if err == nil {
 		return nil

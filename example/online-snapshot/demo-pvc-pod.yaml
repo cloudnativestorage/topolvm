@@ -1,0 +1,43 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: demo-pvc
+  namespace: demo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: topolvm-provisioner-thin
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: demo-pvc-accessor
+  namespace: demo
+spec:
+  containers:
+    - name: pause
+      image: ubuntu:22.04
+      command:
+        - bash
+        - -c
+        - |
+          set -e
+          echo "Creating dummy files in /data..."
+          mkdir -p /data
+          for i in {1..5}; do
+            echo "This is dummy file $i" > /data/file${i}.txt
+          done
+          echo "Dummy files created:"
+          ls -l /data
+          dd if=/dev/urandom of=/data/random_500MIB.bin bs=1M count=512 status=progress
+          sleep infinity
+      volumeMounts:
+        - mountPath: /data
+          name: volume
+  volumes:
+    - name: volume
+      persistentVolumeClaim:
+        claimName: demo-pvc

@@ -1,0 +1,10 @@
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: topolvm-online
+driver: topolvm.io
+deletionPolicy: Delete
+parameters:
+  topolvm.io/snapshot-mode: "online"
+  topolvm.io/snapshot-storage-namespace: "topolvm-system"
+  topolvm.io/snapshot-storage-name: "s3-storage"
