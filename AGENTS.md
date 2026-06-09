@@ -220,6 +220,31 @@ For implementation tasks, study these workflows in docs/design.md:
 3. Look at test files for usage examples: `find . -name "*_test.go" -exec grep -l "pattern" {} \;`
 4. Review recent PRs for similar changes: `gh pr list --state merged --limit 20`
 
+## TDE (Transparent Data Encryption) conventions
+
+- Encryption is additive. A LogicalVolume with `spec.encryption.enabled=false`
+  (or `spec.encryption` absent) MUST take the byte-identical legacy code path
+  in CreateVolume, NodePublishVolume, NodeUnpublishVolume, NodeExpandVolume,
+  CreateSnapshot, DeleteVolume, DeleteSnapshot. Never reorder calls in a way
+  that turns "encryption off" into a different sequence of lvmd / mkfs / mount
+  invocations.
+- Crypto-header and LVM operations act on the ciphertext LV
+  (`/dev/topolvm/<uuid>`). Filesystem operations (mkfs, mount, resize2fs,
+  xfs_growfs, freeze, bind-mount) act on the mapper device
+  (`/dev/mapper/topolvm-<short>`). Never cross these.
+- Secrets (LUKS passphrase, master key) go to cryptsetup ONLY via stdin
+  (`--key-file=-`). Live them in an mlock'd `crypt.SecretBuf` and zeroize
+  with `defer buf.Destroy()` at the point of acquisition. Never argv, env,
+  named temp files, logs, or CR status.
+- EncryptionKey objects store only ciphertext (wrapped DEK). Nodes only get
+  get/list/watch on EncryptionKey and update on logicalvolumes/status; they
+  must not be able to delete EncryptionKey.
+- Run the secret-leak grep before commits:
+  `rg -n "passphrase|--key=|MASTER_KEY" --glob '!**/*_test.go' internal/ | rg -v "key-file=-"`
+  Output must be empty.
+- No em-dashes in code, comments, docs, or commit messages. Use commas,
+  colons, or parentheses.
+
 ## Contributing
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for full contribution guidelines.

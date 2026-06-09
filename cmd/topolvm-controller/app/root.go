@@ -49,6 +49,11 @@ var config struct {
 	zapOpts                     zap.Options
 	controllerServerSettings    driver.ControllerServerSettings
 	profilingBindAddress        string
+
+	// Encryption (TDE) configuration. Disabled unless --encryption-enabled is true.
+	encryptionEnabled  bool
+	keyProviderName    string
+	keyProviderConfig  string
 }
 
 var rootCmd = &cobra.Command{
@@ -91,6 +96,9 @@ func init() {
 	fs.DurationVar(&config.leaderElectionRetryPeriod, "leader-election-retry-period", 2*time.Second, "Duration the LeaderElector clients should wait between tries of actions.")
 	fs.BoolVar(&config.skipNodeFinalize, "skip-node-finalize", false, "skips automatic cleanup of PhysicalVolumeClaims when a Node is deleted")
 	fs.StringVar(&config.profilingBindAddress, "profiling-bind-address", "", "Bind pprof profiling to the given network address. If empty, profiling is disabled.")
+	fs.BoolVar(&config.encryptionEnabled, "encryption-enabled", false, "Enable transparent data encryption (TDE) for volumes provisioned by StorageClasses that opt in.")
+	fs.StringVar(&config.keyProviderName, "key-provider", "", "KeyProvider name to use when encryption is enabled (vault|aws-kms|gcp-kms|azure-kv|pkcs11|fake).")
+	fs.StringVar(&config.keyProviderConfig, "key-provider-config", "", "Path to the provider-specific config file. Must contain no secret material.")
 
 	driver.QuantityVar(fs, &config.controllerServerSettings.Block,
 		"minimum-allocation-block",

@@ -30,6 +30,71 @@ type LogicalVolumeSpec struct {
 	// This field is populated only when LogicalVolume has a source.
 	//+kubebuilder:validation:Optional
 	AccessType string `json:"accessType,omitempty"`
+
+	// Encryption configures transparent data encryption (LUKS2) for this volume.
+	// When nil or Enabled=false, the legacy unencrypted code path is used.
+	// +optional
+	Encryption *EncryptionSpec `json:"encryption,omitempty"`
+}
+
+// EncryptionSpec is set by the controller at provisioning time.
+type EncryptionSpec struct {
+	// Enabled gates encryption for this volume. Absence is equivalent to Enabled=false.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// Provider names the KeyProvider used to wrap the DEK (vault, aws-kms, gcp-kms, azure-kv, pkcs11).
+	// +optional
+	Provider string `json:"provider,omitempty"`
+	// KeyRef is the provider-specific KEK identifier.
+	// +optional
+	KeyRef string `json:"keyRef,omitempty"`
+	// Cipher is the LUKS2 cipher (default aes-xts-plain64).
+	// +optional
+	Cipher string `json:"cipher,omitempty"`
+	// KeySize is the LUKS2 key size in bits (default 512).
+	// +optional
+	KeySize int32 `json:"keySize,omitempty"`
+	// Integrity selects authenticated encryption: "" (off) or "hmac-sha256".
+	// Set at provision time only; cannot be added to an existing volume
+	// without a full reencrypt or clone-and-migrate.
+	// +kubebuilder:validation:Enum="";hmac-sha256
+	// +optional
+	Integrity string `json:"integrity,omitempty"`
+	// IntegrityNoWipe skips the initial integrity wipe. See
+	// design/tde/TDE-Option-dm-integrity.md for the unwritten-sector caveat.
+	// +optional
+	IntegrityNoWipe bool `json:"integrityNoWipe,omitempty"`
+}
+
+// EncryptionState describes the lifecycle of the encrypted device on this node.
+type EncryptionState string
+
+const (
+	EncryptionPending      EncryptionState = "Pending"
+	EncryptionFormatted    EncryptionState = "Formatted"
+	EncryptionOpened       EncryptionState = "Opened"
+	EncryptionReencrypting EncryptionState = "Reencrypting"
+	EncryptionError        EncryptionState = "Error"
+)
+
+// EncryptionStatus reports the observed state of the LUKS device and the
+// EncryptionKey object that currently unlocks it.
+type EncryptionStatus struct {
+	// State is the current encryption lifecycle state.
+	// +optional
+	State EncryptionState `json:"state,omitempty"`
+	// HeaderUUID is the LUKS2 header UUID, identifies the on-disk header.
+	// +optional
+	HeaderUUID string `json:"headerUUID,omitempty"`
+	// ActiveKeyID is the EncryptionKey object name that currently unlocks this volume.
+	// +optional
+	ActiveKeyID string `json:"activeKeyID,omitempty"`
+	// Keyslot is the LUKS2 keyslot occupied by the active passphrase.
+	// +optional
+	Keyslot int32 `json:"keyslot,omitempty"`
+	// MasterKeyEpoch is bumped only by a completed reencrypt.
+	// +optional
+	MasterKeyEpoch int32 `json:"masterKeyEpoch,omitempty"`
 }
 
 // LogicalVolumeStatus defines the observed state of LogicalVolume
@@ -46,6 +111,10 @@ type LogicalVolumeStatus struct {
 
 	// +optional
 	Snapshot *SnapshotStatus `json:"snapshot,omitempty"`
+
+	// Encryption reports the observed encryption state of this volume.
+	// +optional
+	Encryption *EncryptionStatus `json:"encryption,omitempty"`
 }
 
 // SnapshotStatus defines the observed state of a backup or restore operation.

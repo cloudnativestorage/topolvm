@@ -1,0 +1,7 @@
+address: https://vault.svc:8200
+authMethod: kubernetes
+authPath: kubernetes
+role: topolvm
+transitPath: transit
+serviceAccountTokenPath: /var/run/secrets/kubernetes.io/serviceaccount/token
+httpTimeout: 30s

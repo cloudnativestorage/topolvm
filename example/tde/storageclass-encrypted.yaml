@@ -1,0 +1,16 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: topolvm-encrypted
+provisioner: topolvm.io
+parameters:
+  topolvm.io/device-class: "ssd"
+  topolvm.io/encryption: "true"
+  topolvm.io/key-provider: "vault"
+  topolvm.io/key-ref: "transit/keys/topolvm"
+  topolvm.io/cipher: "aes-xts-plain64"
+  topolvm.io/key-size: "512"
+  csi.storage.k8s.io/fstype: "ext4"
+allowVolumeExpansion: true
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Delete

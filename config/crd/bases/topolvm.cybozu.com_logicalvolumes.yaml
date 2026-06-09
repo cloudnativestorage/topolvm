@@ -54,6 +54,44 @@ spec:
                 type: string
               deviceClass:
                 type: string
+              encryption:
+                description: |-
+                  Encryption configures transparent data encryption (LUKS2) for this volume.
+                  When nil or Enabled=false, the legacy unencrypted code path is used.
+                properties:
+                  cipher:
+                    description: Cipher is the LUKS2 cipher (default aes-xts-plain64).
+                    type: string
+                  enabled:
+                    description: Enabled gates encryption for this volume. Absence
+                      is equivalent to Enabled=false.
+                    type: boolean
+                  integrity:
+                    description: |-
+                      Integrity selects authenticated encryption: "" (off) or "hmac-sha256".
+                      Set at provision time only; cannot be added to an existing volume
+                      without a full reencrypt or clone-and-migrate.
+                    enum:
+                    - ""
+                    - hmac-sha256
+                    type: string
+                  integrityNoWipe:
+                    description: |-
+                      IntegrityNoWipe skips the initial integrity wipe. See
+                      design/tde/TDE-Option-dm-integrity.md for the unwritten-sector caveat.
+                    type: boolean
+                  keyRef:
+                    description: KeyRef is the provider-specific KEK identifier.
+                    type: string
+                  keySize:
+                    description: KeySize is the LUKS2 key size in bits (default 512).
+                    format: int32
+                    type: integer
+                  provider:
+                    description: Provider names the KeyProvider used to wrap the DEK
+                      (vault, aws-kms, gcp-kms, azure-kv, pkcs11).
+                    type: string
+                type: object
               lvcreateOptionClass:
                 type: string
               name:
@@ -152,6 +190,31 @@ spec:
                 - type: string
                 pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                 x-kubernetes-int-or-string: true
+              encryption:
+                description: Encryption reports the observed encryption state of this
+                  volume.
+                properties:
+                  activeKeyID:
+                    description: ActiveKeyID is the EncryptionKey object name that
+                      currently unlocks this volume.
+                    type: string
+                  headerUUID:
+                    description: HeaderUUID is the LUKS2 header UUID, identifies the
+                      on-disk header.
+                    type: string
+                  keyslot:
+                    description: Keyslot is the LUKS2 keyslot occupied by the active
+                      passphrase.
+                    format: int32
+                    type: integer
+                  masterKeyEpoch:
+                    description: MasterKeyEpoch is bumped only by a completed reencrypt.
+                    format: int32
+                    type: integer
+                  state:
+                    description: State is the current encryption lifecycle state.
+                    type: string
+                type: object
               message:
                 type: string
               snapshot:
