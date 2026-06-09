@@ -132,6 +132,11 @@ func NewVaultProvider(cfg VaultConfig) (*VaultProvider, error) {
 // Name reports the provider name.
 func (v *VaultProvider) Name() string { return VaultProviderName }
 
+// BindsContext reports that Vault Transit binds the wrapped blob to the
+// `context` parameter (base64(volumeID)), so Decrypt with a mismatched
+// volume id fails on the server side.
+func (v *VaultProvider) BindsContext() bool { return true }
+
 // GenerateDEK uses transit/datakey/plaintext which returns the data key in
 // plaintext + ciphertext form, bound to the encryption context.
 func (v *VaultProvider) GenerateDEK(ctx context.Context, opts KeyOpts) (crypt.SecretBuf, WrappedKey, error) {
