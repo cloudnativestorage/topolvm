@@ -427,16 +427,106 @@ on success.
 
 ## 10. Failure & Edge Cases
 
-These are documented in `prompts/` and handled by the reconcilers:
+Quick reference:
 
 | Scenario | Handling |
 |----------|----------|
-| **Snapshotter pod deleted / PodFailed mid-operation** | `SnapshotPodReconciler` (watches `topolvm.io/snapshot-pod=true`) forces `Phase=Failed` with condition `SnapshotExecutorPodMissing`; the LV controller then runs the normal cleanup path (unmount → delete pod → remove thin snapshot → drop finalizer). Without this, the LV would wait on a pod that no longer exists. |
-| **PVC/PV/LV deleted during restore** | The restore pod holds the device open, so a naive `lvremove` fails ("filesystem in use"). The controller deletes the executor pod **first**, then unmounts, then removes the LV. |
-| **VolumeSnapshot deleted during backup** | Same ordering as above for the backup pod, then the thin snapshot is removed. |
-| **Missing `SnapshotBackupStorage`** | Condition `SnapshotBackupStorageFound=False`; the operation does not start and is requeued. |
+| **Snapshotter pod deleted / PodFailed mid-operation** | `SnapshotPodReconciler` (watches `topolvm.io/snapshot-pod=true`) forces `Phase=Failed` with condition `SnapshotExecutorPodMissing`; the LV controller then runs the normal cleanup path (unmount → delete pod → remove thin snapshot → drop finalizer). Without this, the LV would wait on a pod that no longer exists. See §10.1. |
+| **PVC/PV/LV deleted during restore** | The restore pod holds the device open, so a naive `lvremove` fails with "filesystem in use". The controller deletes the executor pod **first**, then unmounts, then removes the LV. See §10.2. |
+| **VolumeSnapshot deleted during backup** | Same ordering as above for the backup pod, then the thin snapshot is removed. See §10.2. |
+| **Missing `SnapshotBackupStorage`** | Only applies to `online` mode (offline mode doesn't need storage). Condition `SnapshotBackupStorageFound=False`; no executor pod is created and the `VolumeSnapshot` surfaces an `Error` like `snapshot storage <name> not found in namespace <ns>`. The reconciler requeues so the operation can recover once the CR appears. |
 | **Thick device class** | `lvmd` returns `codes.Unimplemented`; only thin snapshots are supported. |
 | **Restore not finished when workload schedules** | `NodePublishVolume` returns `FailedPrecondition` until `Phase=Succeeded`. |
+
+### 10.1 Detecting a lost executor pod (`SnapshotPodReconciler`)
+
+`topolvm-snapshotter` is the only component that knows whether a backup/restore
+reached `Succeeded` or `Failed`. If the pod is deleted externally
+(`kubectl delete pod`, autoscaler drain, OOM killer, `PodDisruptionBudget`,
+node reboot) or transitions to `PodFailed` (e.g. OOMKilled with
+`RestartPolicy: Never`), nothing in the `LogicalVolumeReconciler` would notice
+— the existing reconcile branches take the "executor triggered previously,
+waiting for completion" no-op path and `Status.Snapshot.Phase` stays `Running`
+forever. `SnapshotPodReconciler` exists to close that gap.
+
+**Design decisions:**
+
+- **Separate controller, not a `Watches` on `LogicalVolumeReconciler`.** The LV
+  reconciler's job is to drive an LV from creation to deletion; mixing pod
+  lifecycle into it couples two unrelated state machines. The new controller
+  has one input (pod events filtered by `topolvm.io/snapshot-pod=true`) and
+  one output (LV status update). The two reconcilers share the
+  controller-runtime manager and cache but nothing else, so a bug in pod
+  handling does not impact LV reconciliation (the hot path for every LV on
+  the node).
+- **Event-driven, not polled.** A multi-TB Restic backup can run for hours.
+  Periodic requeues would mean a `client.Get` on the executor pod for every
+  in-flight backup on every tick — wasted work, wasted API-server load, and
+  a source of false positives when a transient API blip coincides with a
+  long backup. The healthy long-running case costs zero API calls.
+- **Atomic single-write status update.** `failSnapshotOperation` performs a
+  single Get + `Status().Update` covering both the
+  `SnapshotExecutorPodMissing` condition and the `Phase = Failed` transition.
+  An earlier two-write design lost the optimistic-concurrency check whenever
+  the LV reconciler's `ensureFinalizerAndLabels` `Patch` interleaved between
+  them. The atomic write also guarantees the operator never observes a state
+  where the condition is set but the phase isn't, or vice versa.
+- **Not a pod finalizer.** A finalizer would block `kubectl delete pod` until
+  the controller acted, which is heavy-handed when the user explicitly asked
+  for the pod to be gone. It also doesn't help with crashed containers,
+  `PodFailed`, or `ImagePullBackOff` — in all those cases the pod is still
+  in the API and no finalizer is involved. The watch-and-detect design
+  covers every "executor is no longer doing useful work" case with one
+  mechanism.
+
+**Known limitation.** A pod stuck in `PodRunning` with a deadlocked container
+is invisible to this design — `Status.Phase` says everything is fine. Catching
+this would require `topolvm-snapshotter` to bump a `LastUpdated` heartbeat on
+`Status.Snapshot` so the controller can detect a frozen in-flight operation.
+Not implemented today.
+
+### 10.2 Cleanup ordering when an in-flight LV is deleted
+
+The backup pod (and the controller-side mount) hold the LV device open via a
+hostPath mount. Calling `lvremove -f` straight away returns
+`exit status 5: Logical volume <vg>/<lv> contains a filesystem in use.` and
+the LV finalizer is never removed.
+
+The fix is a strict teardown order inside `handleDeletion`
+(`internal/controller/logicalvolume_controller.go`):
+
+1. **Delete the executor pod** (`backup-<lv>` or `restore-<lv>`) and requeue
+   until the kubelet finishes terminating the containers and releases the
+   hostPath mount.
+2. **Unmount** the host-side mount held by the controller
+   (`internal/mounter.LVMount.Unmount`).
+3. **Remove the Linux LV** via `lvService.RemoveLV` → `lvremove -f`.
+4. **Drop the finalizer** so the LV CR can be GC'd.
+
+Two predicates select the in-flight branch:
+
+- `isLVBackupCandidate` — true when the LV has a `VolumeSnapshotContent` of
+  its own and the snapshot is not yet `Succeeded`. Driven by
+  `buildSnapshotContextFrBackup`.
+- `isLVRestoreCandidate` — true when the LV has `Spec.Source` set and the
+  source's snapshot is `Succeeded`. Driven by `buildSnapshotContextFrRestore`.
+
+These are mutually exclusive today (a backup LV has no `Spec.Source`; a
+restore target has no VSContent of its own), and the dispatcher in
+`handleDeletion` documents that assumption.
+
+Both branches funnel through a single helper,
+`deleteSnapshotPodAndUnMount(ctx, lv, log, operation)`, which calls
+`snapshotHandler.deleteRunningSnapshotPod(ctx, log, lv, operation)` — the
+operation type (`Backup` / `Restore`) is the only thing that differs between
+them. On `IsNotFound` the helper returns `(requeue=false, nil)`, so once the
+pod is fully gone the next reconcile falls through to `deletionWithoutSnapshot`
+and `lvremove` succeeds.
+
+The snapshot-**delete** pod (`delete-<lv>`) does not mount the LV
+(`internal/executor/delete.go`: `podSpec.Volumes = []corev1.Volume{}`), so an
+external deletion of *that* pod cannot wedge `lvremove`. The
+`SnapshotPodReconciler` does not need to watch it.
 
 ---
 
@@ -455,4 +545,3 @@ These are documented in `prompts/` and handled by the reconcilers:
 - Docs: [docs/snapshot-and-restore.md](../../docs/snapshot-and-restore.md),
   [docs/design.md](../../docs/design.md),
   [docs/logical-volume-crd.md](../../docs/logical-volume-crd.md)
-- Edge-case task notes: `prompts/`
