@@ -198,7 +198,7 @@ sequenceDiagram
     LVMD-->>LVR: thin snapshot device
     LVR->>LV: validate SnapshotBackupStorage exists<br/>(condition: SnapshotBackupStorageFound)
     LVR->>LVR: mount device ro,norecovery,nouuid
-    LVR->>Pod: create pod "backup-<lv>"<br/>(condition: SnapshotBackupExecutorEnsured)
+    LVR->>Pod: create pod "backup-{lv}"<br/>(condition: SnapshotBackupExecutorEnsured)
 
     Pod->>LV: Phase=Running, StartTime
     Pod->>OBJ: restic backup /snapshot-data
@@ -211,7 +211,7 @@ sequenceDiagram
     LVR->>LV: operation complete → cleanup
     LVR->>Pod: delete pod (condition: SnapshotBackupExecutorCleaned)
     LVR->>LVMD: remove thin snapshot (condition: LVMSnapshotCleaned)
-    Note over LV,OBJ: data durable in object store;<br/>node-local thin snapshot gone
+    Note over LV,OBJ: data durable in object store —<br/>node-local thin snapshot gone
 ```
 
 **Notes**
@@ -249,10 +249,10 @@ sequenceDiagram
     LVR->>LVMD: CreateLVSnapshot (thin, rw target LV)
     LVR->>LV: validate SnapshotBackupStorage<br/>(SnapshotBackupStorageFound)
     LVR->>LVR: bind-mount target device
-    LVR->>Pod: create pod "restore-<lv>"<br/>(SnapshotRestoreExecutorEnsured)
+    LVR->>Pod: create pod "restore-{lv}"<br/>(SnapshotRestoreExecutorEnsured)
 
     Pod->>LV: Phase=Running
-    Pod->>OBJ: restic restore <snapshotID> → /snapshot-data
+    Pod->>OBJ: restic restore {snapshotID} → /snapshot-data
     loop every 10s
         Pod->>LV: patch Status.Snapshot.Progress
     end
