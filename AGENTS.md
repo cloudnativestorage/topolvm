@@ -32,37 +32,67 @@ When you use AI assistance on this project, the AI reads this file to understand
 
 ## Project Overview
 
-- **Language**: Go 1.24.0
+- **Language**: Go (see `go.mod` for the exact toolchain; currently 1.25.x)
 - **Framework**: Kubernetes controller-runtime
 - **Type**: CSI (Container Storage Interface) plugin for Kubernetes using LVM
 - **License**: [LICENSE](./LICENSE)
+- **Supported Kubernetes**: 1.33–1.35 (see [README.md](./README.md) and `versions.mk`)
+
+### Binaries built from this repo
+
+The `cmd/` tree contains six entry points; `hypertopolvm` is a multi-call binary that dispatches to the controller, node, and scheduler based on `argv[0]`:
+
+- `hypertopolvm` — multi-call binary for `topolvm-controller`, `topolvm-node`, `topolvm-scheduler`
+- `lvmd` — privileged gRPC daemon that runs on each storage node and shells out to LVM
+- `topolvm-snapshotter` — backup/restore/delete worker invoked as a pod for online VolumeSnapshots (Restic-backed)
+
+`cmd/topolvm-controller`, `cmd/topolvm-node`, `cmd/topolvm-scheduler` are thin shims that exist to support running the components as separate binaries.
 
 ## Development Commands
 
 ### Essential Commands
 
 ```bash
-# Setup development environment (run once)
+# Setup development environment (run once; installs lvm2, protoc, controller-gen, golangci-lint, etc.)
 make setup
 
-# Run tests and linting before committing
+# Run lint + unit tests with -race (this is the main pre-commit check)
 make test
+
+# Run only the unit tests that depend on the legacy `topolvm.cybozu.com` API group
+# (uses TEST_LEGACY=1 — kept separate because it mutates global plugin-name state)
+make groupname-test
 
 # Fix linting issues automatically
 make lint-fix
 
-# Generate code after modifying API types or protobuf
+# Generate code + CRDs + helm-docs after modifying API types, protobuf, or charts/values
 make generate
 
-# Verify no uncommitted generated files (CI check)
+# Verify generated artifacts are committed (CI check: runs generate then `git diff --exit-code`)
 make check-uncommitted
 
-# Build binaries
+# Build binaries (hypertopolvm, lvmd, and the CSI sidecars under build/)
 make build
 
-# Build Docker images
+# Build Docker images (image-normal + image-with-sidecar)
 make image
 ```
+
+### Running a single unit test
+
+```bash
+# Run one package
+go test -race ./internal/controller/...
+
+# Run a single Ginkgo spec by description substring
+go test -race ./internal/controller -ginkgo.focus="snapshot"
+
+# Run a single Go test function
+go test -race ./internal/executor -run TestArgs
+```
+
+Controller and hook tests use controller-runtime's envtest (it downloads kube-apiserver/etcd binaries into `./testbin/` — `make setup` provisions this). If a test fails with "no such file", re-run `make setup` or check `ENVTEST_KUBERNETES_VERSION` in `versions.mk`.
 
 ### E2E Testing
 
@@ -133,15 +163,36 @@ git commit -s -m "Add new field to LogicalVolume CRD"
 
 ```
 topolvm/
-├── api/v1/              # Kubernetes API types (source of truth for CRDs)
-├── cmd/                 # Main binaries (hypertopolvm, lvmd)
-├── internal/            # Internal packages (controllers, drivers)
-├── pkg/lvmd/proto/      # gRPC protocol definitions
-├── charts/topolvm/      # Helm chart
-├── docs/                # Documentation (READ THESE FIRST)
-├── test/e2e/           # End-to-end test suite
-└── Makefile            # Build automation
+├── api/v1/                  # Kubernetes API types (source of truth for CRDs)
+├── api/legacy/v1/           # GENERATED copy with `topolvm.io` → `topolvm.cybozu.com`
+├── cmd/                     # Main binaries (see "Binaries built from this repo" above)
+├── internal/
+│   ├── controller/          # controller-runtime reconcilers (LogicalVolume, Node, PVC, snapshots)
+│   ├── driver/              # CSI controller + node service implementations
+│   ├── lvmd/                # LVMd gRPC server (lvservice, vgservice, healthservice)
+│   ├── backupengine/        # Pluggable backup providers + progress reporting for online snapshots
+│   ├── executor/            # Builds CLI args for the snapshotter pod (backup/restore/delete)
+│   ├── hook/                # Mutating admission webhook for Pod capacity annotations
+│   ├── scheduler/           # topolvm-scheduler extender (filter + prioritize)
+│   ├── runners/             # Long-running goroutines wired into the manager
+│   └── ...                  # client, getter, mounter, filesystem, profiling, testutils
+├── pkg/lvmd/                # Public lvmd client, types, and proto definitions
+│   └── proto/               # GENERATED gRPC stubs from lvmd.proto
+├── charts/topolvm/          # Helm chart (CRD templates and README are generated)
+├── docs/                    # User-facing docs (READ THESE FIRST — see Quick Reference above)
+├── prompts/                 # Task-specific design notes for snapshot/restore edge cases
+├── test/e2e/                # Ginkgo end-to-end suite (kind + minikube variants)
+└── Makefile / versions.mk   # Build automation and pinned tool versions
 ```
+
+### Two CRDs, Two API Groups
+
+The repo defines two CRDs in `api/v1/`:
+
+- `LogicalVolume` — the per-volume coordination object between `topolvm-controller` and `topolvm-node` (see [docs/logical-volume-crd.md](./docs/logical-volume-crd.md)).
+- `SnapshotBackupStorage` — backend configuration (S3/GCS/Azure) for the online snapshot/backup feature implemented by `topolvm-snapshotter` + `internal/backupengine`.
+
+The plugin's API group is normally `topolvm.io`, but for backwards compatibility with older deployments it can be switched to `topolvm.cybozu.com` by setting the `USE_LEGACY` env var (see `constants.go` and the legacy CRDs gated by `useLegacy` in the Helm chart). `api/legacy/v1/` is generated from `api/v1/` by `make generate-legacy-api` — never edit it directly.
 
 ### Security Considerations
 
@@ -160,6 +211,7 @@ For implementation tasks, study these workflows in docs/design.md:
 1. **Dynamic Provisioning** (11 steps): PVC → LogicalVolume CRD → LVM volume creation
 2. **Volume Expansion** (9 steps): PVC resize → LV resize → filesystem resize
 3. **Snapshot Creation**: Only works with thin provisioning (see docs/snapshot-and-restore.md)
+4. **Online Snapshot / Backup** (work in progress on the `online-snapshot` branch): `topolvm-controller` reconciles `VolumeSnapshot` objects, spawns a per-snapshot `topolvm-snapshotter` pod on the node holding the LV, and the snapshotter uses `internal/backupengine` (Restic today, Kopia planned) to ship data to the backend configured by a `SnapshotBackupStorage` CR. The CLI argv handed to that pod is built by `internal/executor` — its golden tests document the exact contract. Restore is signaled to `topolvm-node` via the `topolvm.io/snapshot-restore-required` annotation on the target `LogicalVolume`, which deferred restore until `NodePublishVolume`. Cross-reference task notes in `prompts/` before changing these flows — they capture edge cases (pod/PVC deletion mid-backup, missing storage) that aren't obvious from the code alone.
 
 ### When Stuck
 

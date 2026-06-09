@@ -18,3 +18,11 @@ func SetupLogicalVolumeReconcilerWithServices(
 	reconciler := internalController.NewLogicalVolumeReconcilerWithServices(client, nodeName, vgService, lvService)
 	return reconciler.SetupWithManager(mgr)
 }
+
+// SetupSnapshotPodReconciler creates the SnapshotPodReconciler (which watches
+// the snapshot executor pods and flips in-flight operations to Failed when
+// the pod disappears) and sets it up with the manager.
+func SetupSnapshotPodReconciler(mgr ctrl.Manager, client client.Client) error {
+	reconciler := internalController.NewSnapshotPodReconciler(client)
+	return reconciler.SetupWithManager(mgr)
+}

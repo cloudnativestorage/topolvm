@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
+	snapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	"github.com/spf13/viper"
 	"github.com/topolvm/topolvm"
 	topolvmlegacyv1 "github.com/topolvm/topolvm/api/legacy/v1"
@@ -49,6 +50,7 @@ func init() {
 
 	utilruntime.Must(topolvmv1.AddToScheme(scheme))
 	utilruntime.Must(topolvmlegacyv1.AddToScheme(scheme))
+	utilruntime.Must(snapshotv1.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
 
@@ -122,6 +124,11 @@ func subMain(ctx context.Context) error {
 	if err := controller.SetupLogicalVolumeReconcilerWithServices(
 		mgr, client, nodename, vgService, lvService); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "LogicalVolume")
+		return err
+	}
+
+	if err := controller.SetupSnapshotPodReconciler(mgr, client); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "SnapshotPod")
 		return err
 	}
 	//+kubebuilder:scaffold:builder
