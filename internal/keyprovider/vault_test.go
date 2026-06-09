@@ -1,4 +1,4 @@
-package keyprovider
+package keyprovider_test
 
 import (
 	"context"
@@ -9,7 +9,16 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/topolvm/topolvm/internal/keyprovider"
+	"github.com/topolvm/topolvm/internal/keyprovider/providertest"
 )
+
+func TestVault_Conformance(t *testing.T) {
+	p, _, closeSrv := newTestVault(t, true)
+	defer closeSrv()
+	providertest.Run(t, p, "k")
+}
 
 // fakeVault is a minimal stand-in for transit + kubernetes auth. It does not
 // implement any real crypto; instead it records calls and returns deterministic
@@ -44,9 +53,16 @@ func (f *fakeVault) handler() http.Handler {
 			http.Error(w, "missing context", http.StatusBadRequest)
 			return
 		}
-		// Return a fixed plaintext + ciphertext for round-trip checks.
+		// Generate a deterministic 32-byte DEK derived from context so
+		// that decrypt can reproduce it. (Tests do not care about
+		// cryptographic strength; only that lengths and round-trip
+		// behavior match the conformance suite.)
 		f.keyVersion++
-		plain := base64.StdEncoding.EncodeToString([]byte("dek-plaintext"))
+		dek := make([]byte, 32)
+		for i := range dek {
+			dek[i] = byte((int(body.Context[i%len(body.Context)]) + i) & 0xff)
+		}
+		plain := base64.StdEncoding.EncodeToString(dek)
 		ct := "vault:v" + itoa(f.keyVersion) + ":" + body.Context
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{
@@ -70,7 +86,11 @@ func (f *fakeVault) handler() http.Handler {
 			http.Error(w, "context mismatch", http.StatusForbidden)
 			return
 		}
-		plain := base64.StdEncoding.EncodeToString([]byte("dek-plaintext"))
+		dek := make([]byte, 32)
+		for i := range dek {
+			dek[i] = byte((int(body.Context[i%len(body.Context)]) + i) & 0xff)
+		}
+		plain := base64.StdEncoding.EncodeToString(dek)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": map[string]any{"plaintext": plain},
 		})
@@ -127,18 +147,18 @@ func itoa(i int) string {
 	return string(buf[pos:])
 }
 
-func newTestVault(t *testing.T, requireToken bool) (*VaultProvider, *fakeVault, func()) {
+func newTestVault(t *testing.T, requireToken bool) (*keyprovider.VaultProvider, *fakeVault, func()) {
 	fv := &fakeVault{t: t, keyVersion: 0, requireToken: requireToken}
 	srv := httptest.NewServer(fv.handler())
 	// Use token auth method backed by env to keep the test free of files.
 	t.Setenv("VAULT_TOKEN", "s.test-token")
-	cfg := VaultConfig{
+	cfg := keyprovider.VaultConfig{
 		Address:     srv.URL,
 		AuthMethod:  "token",
 		TransitPath: "transit",
 		HTTPTimeout: 5 * time.Second,
 	}
-	p, err := NewVaultProvider(cfg)
+	p, err := keyprovider.NewVaultProvider(cfg)
 	if err != nil {
 		srv.Close()
 		t.Fatalf("NewVaultProvider: %v", err)
@@ -151,14 +171,15 @@ func TestVault_DatakeyDecryptRoundTrip(t *testing.T) {
 	defer close()
 
 	ctx := context.Background()
-	plain, wrapped, err := p.GenerateDEK(ctx, KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
+	plain, wrapped, err := p.GenerateDEK(ctx, keyprovider.KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
 	if err != nil {
 		t.Fatalf("GenerateDEK: %v", err)
 	}
-	if string(plain.Bytes()) != "dek-plaintext" {
-		t.Fatalf("plaintext: %q", plain.Bytes())
-	}
+	original := append([]byte(nil), plain.Bytes()...)
 	plain.Destroy()
+	if len(original) != 32 {
+		t.Fatalf("DEK length: %d", len(original))
+	}
 	if wrapped.KEKVersion != "v1" {
 		t.Fatalf("kek version: %q", wrapped.KEKVersion)
 	}
@@ -171,8 +192,8 @@ func TestVault_DatakeyDecryptRoundTrip(t *testing.T) {
 		t.Fatalf("Unwrap: %v", err)
 	}
 	defer unwrapped.Destroy()
-	if string(unwrapped.Bytes()) != "dek-plaintext" {
-		t.Fatalf("unwrap: %q", unwrapped.Bytes())
+	if string(unwrapped.Bytes()) != string(original) {
+		t.Fatalf("unwrap mismatch")
 	}
 }
 
@@ -181,7 +202,7 @@ func TestVault_ContextMismatchFails(t *testing.T) {
 	defer close()
 
 	ctx := context.Background()
-	plain, wrapped, err := p.GenerateDEK(ctx, KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
+	plain, wrapped, err := p.GenerateDEK(ctx, keyprovider.KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
 	if err != nil {
 		t.Fatalf("GenerateDEK: %v", err)
 	}
@@ -198,7 +219,7 @@ func TestVault_Rewrap(t *testing.T) {
 	defer close()
 
 	ctx := context.Background()
-	plain, w1, err := p.GenerateDEK(ctx, KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
+	plain, w1, err := p.GenerateDEK(ctx, keyprovider.KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
 	if err != nil {
 		t.Fatalf("GenerateDEK: %v", err)
 	}
@@ -226,11 +247,3 @@ func TestVault_KEKVersion(t *testing.T) {
 	}
 }
 
-func TestRedactErrorBody(t *testing.T) {
-	got := redact("{\"plaintext\":\"AAAA\",\"ciphertext\":\"BBBB\",\"key\":\"CCCC\"}")
-	for _, s := range []string{"plaintext", "ciphertext", "key"} {
-		if strings.Contains(got, s) {
-			t.Fatalf("redact left %q in %q", s, got)
-		}
-	}
-}

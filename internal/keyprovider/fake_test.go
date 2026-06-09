@@ -1,23 +1,30 @@
-package keyprovider
+package keyprovider_test
 
 import (
 	"bytes"
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/topolvm/topolvm/internal/keyprovider"
+	"github.com/topolvm/topolvm/internal/keyprovider/providertest"
 )
+
+func TestFake_Conformance(t *testing.T) {
+	providertest.Run(t, keyprovider.NewFakeProvider(), "transit/keys/topolvm")
+}
 
 func TestFake_RoundTrip(t *testing.T) {
 	ctx := context.Background()
-	p := NewFakeProvider()
-	plain, wrapped, err := p.GenerateDEK(ctx, KeyOpts{VolumeID: "vol-1", KeyRef: "transit/keys/topolvm"})
+	p := keyprovider.NewFakeProvider()
+	plain, wrapped, err := p.GenerateDEK(ctx, keyprovider.KeyOpts{VolumeID: "vol-1", KeyRef: "transit/keys/topolvm"})
 	if err != nil {
 		t.Fatalf("GenerateDEK: %v", err)
 	}
 	original := append([]byte(nil), plain.Bytes()...)
 	plain.Destroy()
 
-	if wrapped.Provider != FakeProviderName {
+	if wrapped.Provider != keyprovider.FakeProviderName {
 		t.Fatalf("provider = %q", wrapped.Provider)
 	}
 	if wrapped.KeyRef != "transit/keys/topolvm" {
@@ -44,23 +51,23 @@ func TestFake_RoundTrip(t *testing.T) {
 
 func TestFake_ContextBindingMismatch(t *testing.T) {
 	ctx := context.Background()
-	p := NewFakeProvider()
-	plain, wrapped, err := p.GenerateDEK(ctx, KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
+	p := keyprovider.NewFakeProvider()
+	plain, wrapped, err := p.GenerateDEK(ctx, keyprovider.KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
 	if err != nil {
 		t.Fatalf("GenerateDEK: %v", err)
 	}
 	plain.Destroy()
 
 	_, err = p.Unwrap(ctx, wrapped, "wrong-volume")
-	if !errors.Is(err, ErrContextMismatch) {
+	if !errors.Is(err, keyprovider.ErrContextMismatch) {
 		t.Fatalf("expected ErrContextMismatch, got %v", err)
 	}
 }
 
 func TestFake_Rewrap(t *testing.T) {
 	ctx := context.Background()
-	p := NewFakeProvider()
-	plain, wrapped1, err := p.GenerateDEK(ctx, KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
+	p := keyprovider.NewFakeProvider()
+	plain, wrapped1, err := p.GenerateDEK(ctx, keyprovider.KeyOpts{VolumeID: "vol-1", KeyRef: "k"})
 	if err != nil {
 		t.Fatalf("GenerateDEK: %v", err)
 	}
@@ -93,7 +100,7 @@ func TestFake_Rewrap(t *testing.T) {
 
 func TestFake_KEKVersionInitializesOnDemand(t *testing.T) {
 	ctx := context.Background()
-	p := NewFakeProvider()
+	p := keyprovider.NewFakeProvider()
 	v, err := p.KEKVersion(ctx, "k-new")
 	if err != nil {
 		t.Fatalf("KEKVersion: %v", err)
@@ -104,11 +111,11 @@ func TestFake_KEKVersionInitializesOnDemand(t *testing.T) {
 }
 
 func TestRegistry_FakeAvailable(t *testing.T) {
-	p, err := New(FakeProviderName, "")
+	p, err := keyprovider.New(keyprovider.FakeProviderName, "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if p.Name() != FakeProviderName {
+	if p.Name() != keyprovider.FakeProviderName {
 		t.Fatalf("Name() = %q", p.Name())
 	}
 }

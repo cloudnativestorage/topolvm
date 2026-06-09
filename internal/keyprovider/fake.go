@@ -52,6 +52,10 @@ func NewFakeProvider() *FakeProvider {
 // Name reports the provider name.
 func (f *FakeProvider) Name() string { return FakeProviderName }
 
+// BindsContext reports that the fake provider natively binds volumeID into
+// AES-GCM AAD, so Unwrap on the wrong volume id fails.
+func (f *FakeProvider) BindsContext() bool { return true }
+
 // RotateKEK appends a new KEK version for keyRef and returns its version
 // string. Used by tests that exercise KEK rotation flows.
 func (f *FakeProvider) RotateKEK(keyRef string) string {
