@@ -43,6 +43,20 @@ func dmName(volumeID string) string {
 	return "topolvm-" + hex.EncodeToString(h[:8])
 }
 
+// integrityMatches reports whether the on-disk integrity profile matches the
+// configured spec. Both empty strings (off) match; a profile mismatch fails.
+func integrityMatches(onDisk, want string) bool {
+	normalize := func(s string) string {
+		switch s {
+		case "", "(no)", "none":
+			return ""
+		default:
+			return s
+		}
+	}
+	return normalize(onDisk) == normalize(want)
+}
+
 // resolvedKey carries the plaintext passphrase plus the EncryptionKey object
 // used to derive it. Callers must Destroy() the passphrase.
 type resolvedKey struct {
@@ -92,10 +106,25 @@ func (e *encryptionCoordinator) openOrFormat(ctx context.Context, lv *topolvmv1.
 	if err != nil {
 		return "", err
 	}
+	wantIntegrity := lv.Spec.Encryption.Integrity
 	if !isLuks {
+		// Integrity is a node-side capability gate. We fail loudly
+		// rather than silently provisioning a confidentiality-only LV
+		// when the StorageClass asked for authenticated encryption.
+		if wantIntegrity != "" {
+			ok, supErr := e.crypt.IntegritySupported(ctx)
+			if supErr != nil {
+				return "", fmt.Errorf("integrity support check: %w", supErr)
+			}
+			if !ok {
+				return "", fmt.Errorf("storage class requested integrity=%q but cryptsetup on this node does not support dm-integrity; rebuild the node image with a current cryptsetup or omit topolvm.io/integrity", wantIntegrity)
+			}
+		}
 		opts := crypt.FormatOpts{
-			Cipher:  lv.Spec.Encryption.Cipher,
-			KeySize: int(lv.Spec.Encryption.KeySize),
+			Cipher:    lv.Spec.Encryption.Cipher,
+			KeySize:   int(lv.Spec.Encryption.KeySize),
+			Integrity: wantIntegrity,
+			NoWipe:    lv.Spec.Encryption.IntegrityNoWipe,
 		}
 		if err := e.crypt.Format(ctx, devicePath, rk.pass, opts); err != nil {
 			return "", err
@@ -106,6 +135,17 @@ func (e *encryptionCoordinator) openOrFormat(ctx context.Context, lv *topolvmv1.
 		}
 		if err := e.markFormatted(ctx, lv.Name, uuid); err != nil {
 			return "", err
+		}
+	} else {
+		// On-disk header already exists. Refuse to open if it disagrees
+		// with the requested integrity profile rather than corrupting
+		// reads/writes.
+		hp, err := e.crypt.HeaderProfile(ctx, devicePath)
+		if err != nil {
+			return "", fmt.Errorf("header profile: %w", err)
+		}
+		if !integrityMatches(hp.Integrity, wantIntegrity) {
+			return "", fmt.Errorf("on-disk header integrity profile %q does not match requested %q for volume %s", hp.Integrity, wantIntegrity, lv.Status.VolumeID)
 		}
 	}
 

@@ -66,6 +66,20 @@ spec:
                     description: Enabled gates encryption for this volume. Absence
                       is equivalent to Enabled=false.
                     type: boolean
+                  integrity:
+                    description: |-
+                      Integrity selects authenticated encryption: "" (off) or "hmac-sha256".
+                      Set at provision time only; cannot be added to an existing volume
+                      without a full reencrypt or clone-and-migrate.
+                    enum:
+                    - ""
+                    - hmac-sha256
+                    type: string
+                  integrityNoWipe:
+                    description: |-
+                      IntegrityNoWipe skips the initial integrity wipe. See
+                      design/tde/TDE-Option-dm-integrity.md for the unwritten-sector caveat.
+                    type: boolean
                   keyRef:
                     description: KeyRef is the provider-specific KEK identifier.
                     type: string

@@ -49,12 +49,30 @@ func parseEncryptionParameters(params map[string]string) (*topolvmv1.EncryptionS
 		}
 		keySize = int32(n)
 	}
+	integrity := strings.ToLower(strings.TrimSpace(params[topolvm.GetEncryptionIntegrityKey()]))
+	switch integrity {
+	case "", "none":
+		integrity = ""
+	case crypt.IntegrityHMACSHA256:
+		// ok
+	default:
+		return nil, fmt.Errorf("unsupported %s=%q (only %q is supported)", topolvm.GetEncryptionIntegrityKey(), integrity, crypt.IntegrityHMACSHA256)
+	}
+	integrityNoWipe := false
+	if v := params[topolvm.GetEncryptionIntegrityNoWipeKey()]; v != "" {
+		if integrity == "" {
+			return nil, fmt.Errorf("%s requires %s to be set", topolvm.GetEncryptionIntegrityNoWipeKey(), topolvm.GetEncryptionIntegrityKey())
+		}
+		integrityNoWipe = isTruthy(v)
+	}
 	return &topolvmv1.EncryptionSpec{
-		Enabled:  true,
-		Provider: provider,
-		KeyRef:   keyRef,
-		Cipher:   cipher,
-		KeySize:  keySize,
+		Enabled:         true,
+		Provider:        provider,
+		KeyRef:          keyRef,
+		Cipher:          cipher,
+		KeySize:         keySize,
+		Integrity:       integrity,
+		IntegrityNoWipe: integrityNoWipe,
 	}, nil
 }
 

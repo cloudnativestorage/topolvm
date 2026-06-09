@@ -98,6 +98,11 @@ func (w *LVReencryptWorker) runReencrypt(ctx context.Context, lv *topolvmv1.Logi
 		w.mu.Unlock()
 	}()
 
+	if lv.Spec.Encryption != nil && lv.Spec.Encryption.Integrity != "" {
+		log.Error(fmt.Errorf("integrity volume reencrypt not supported"), "refusing reencrypt", "lv", lv.Name)
+		_ = w.markError(ctx, lv.Name, "integrity volumes do not support in-place reencrypt; use clone-and-migrate")
+		return
+	}
 	dev := w.devicePathFn(lv.Status.VolumeID)
 	if dev == "" {
 		log.Error(fmt.Errorf("empty device path"), "reencrypt failed", "lv", lv.Name)

@@ -54,6 +54,16 @@ type EncryptionSpec struct {
 	// KeySize is the LUKS2 key size in bits (default 512).
 	// +optional
 	KeySize int32 `json:"keySize,omitempty"`
+	// Integrity selects authenticated encryption: "" (off) or "hmac-sha256".
+	// Set at provision time only; cannot be added to an existing volume
+	// without a full reencrypt or clone-and-migrate.
+	// +kubebuilder:validation:Enum="";hmac-sha256
+	// +optional
+	Integrity string `json:"integrity,omitempty"`
+	// IntegrityNoWipe skips the initial integrity wipe. See
+	// design/tde/TDE-Option-dm-integrity.md for the unwritten-sector caveat.
+	// +optional
+	IntegrityNoWipe bool `json:"integrityNoWipe,omitempty"`
 }
 
 // EncryptionState describes the lifecycle of the encrypted device on this node.

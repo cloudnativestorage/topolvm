@@ -135,6 +135,81 @@ func TestFormat_ArgvAndStdin(t *testing.T) {
 	}
 }
 
+func TestFormat_WithIntegrity(t *testing.T) {
+	r := &recordingRunner{}
+	r.push(CmdResult{}, nil)
+	m := NewManagerWithRunner("", r)
+	pass := mustSecret(t, "pw")
+	defer pass.Destroy()
+	if err := m.Format(context.Background(), "/dev/topolvm/abc", pass, FormatOpts{Integrity: IntegrityHMACSHA256, NoWipe: true}); err != nil {
+		t.Fatalf("Format: %v", err)
+	}
+	call := r.calls[0]
+	want := []string{
+		"luksFormat",
+		"--type", "luks2",
+		"--cipher", "aes-xts-plain64",
+		"--key-size", "512",
+		"--pbkdf", "argon2id",
+		"--batch-mode",
+		"--integrity", "hmac-sha256",
+		"--integrity-no-wipe",
+		"/dev/topolvm/abc",
+		"--key-file=-",
+	}
+	if !reflect.DeepEqual(call.Args, want) {
+		t.Fatalf("argv mismatch\n got %v\nwant %v", call.Args, want)
+	}
+}
+
+func TestHeaderProfile_ParsesIntegrity(t *testing.T) {
+	r := &recordingRunner{}
+	r.push(CmdResult{Stdout: []byte("LUKS header information\nVersion: 2\nCipher: aes-xts-plain64\nIntegrity: hmac-sha256\nKeyslots:\n  0: luks2\n")}, nil)
+	m := NewManagerWithRunner("", r)
+	hp, err := m.HeaderProfile(context.Background(), "/dev/topolvm/abc")
+	if err != nil {
+		t.Fatalf("HeaderProfile: %v", err)
+	}
+	if hp.Cipher != "aes-xts-plain64" || hp.Integrity != "hmac-sha256" {
+		t.Fatalf("unexpected profile: %+v", hp)
+	}
+}
+
+func TestHeaderProfile_NoIntegrity(t *testing.T) {
+	r := &recordingRunner{}
+	r.push(CmdResult{Stdout: []byte("Cipher: aes-xts-plain64\nIntegrity: (no)\n")}, nil)
+	m := NewManagerWithRunner("", r)
+	hp, _ := m.HeaderProfile(context.Background(), "x")
+	if hp.Integrity != "" {
+		t.Fatalf("expected empty integrity, got %q", hp.Integrity)
+	}
+}
+
+func TestIntegritySupported_True(t *testing.T) {
+	r := &recordingRunner{}
+	r.push(CmdResult{Stdout: []byte("cryptsetup 2.7.0\n")}, nil)
+	r.push(CmdResult{Stdout: []byte("usage: cryptsetup luksFormat ... --integrity <hash>\n")}, nil)
+	m := NewManagerWithRunner("", r)
+	ok, err := m.IntegritySupported(context.Background())
+	if err != nil {
+		t.Fatalf("IntegritySupported: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected supported=true")
+	}
+}
+
+func TestIntegritySupported_False(t *testing.T) {
+	r := &recordingRunner{}
+	r.push(CmdResult{Stdout: []byte("cryptsetup 1.7.0\n")}, nil)
+	r.push(CmdResult{Stdout: []byte("usage: cryptsetup luksFormat ... (no integrity here)\n")}, nil)
+	m := NewManagerWithRunner("", r)
+	ok, _ := m.IntegritySupported(context.Background())
+	if ok {
+		t.Fatal("expected supported=false")
+	}
+}
+
 func TestFormat_RejectsEmptyPass(t *testing.T) {
 	r := &recordingRunner{}
 	m := NewManagerWithRunner("", r)
