@@ -180,7 +180,7 @@ topolvm/
 │   └── proto/               # GENERATED gRPC stubs from lvmd.proto
 ├── charts/topolvm/          # Helm chart (CRD templates and README are generated)
 ├── docs/                    # User-facing docs (READ THESE FIRST — see Quick Reference above)
-├── prompts/                 # Task-specific design notes for snapshot/restore edge cases
+├── design/                  # Feature design docs (e.g. design/restic-snapshot/DESIGN.md)
 ├── test/e2e/                # Ginkgo end-to-end suite (kind + minikube variants)
 └── Makefile / versions.mk   # Build automation and pinned tool versions
 ```
@@ -211,7 +211,7 @@ For implementation tasks, study these workflows in docs/design.md:
 1. **Dynamic Provisioning** (11 steps): PVC → LogicalVolume CRD → LVM volume creation
 2. **Volume Expansion** (9 steps): PVC resize → LV resize → filesystem resize
 3. **Snapshot Creation**: Only works with thin provisioning (see docs/snapshot-and-restore.md)
-4. **Online Snapshot / Backup** (work in progress on the `online-snapshot` branch): `topolvm-controller` reconciles `VolumeSnapshot` objects, spawns a per-snapshot `topolvm-snapshotter` pod on the node holding the LV, and the snapshotter uses `internal/backupengine` (Restic today, Kopia planned) to ship data to the backend configured by a `SnapshotBackupStorage` CR. The CLI argv handed to that pod is built by `internal/executor` — its golden tests document the exact contract. Restore is signaled to `topolvm-node` via the `topolvm.io/snapshot-restore-required` annotation on the target `LogicalVolume`, which deferred restore until `NodePublishVolume`. Cross-reference task notes in `prompts/` before changing these flows — they capture edge cases (pod/PVC deletion mid-backup, missing storage) that aren't obvious from the code alone.
+4. **Online Snapshot / Backup** (work in progress on the `online-snapshot` branch): `topolvm-controller` reconciles `VolumeSnapshot` objects, spawns a per-snapshot `topolvm-snapshotter` pod on the node holding the LV, and the snapshotter uses `internal/backupengine` (Restic today, Kopia planned) to ship data to the backend configured by a `SnapshotBackupStorage` CR. The CLI argv handed to that pod is built by `internal/executor` — its golden tests document the exact contract. Restore is signaled to `topolvm-node` via the `topolvm.io/snapshot-restore-required` annotation on the target `LogicalVolume`, which deferred restore until `NodePublishVolume`. Read [design/restic-snapshot/DESIGN.md](./design/restic-snapshot/DESIGN.md) before changing these flows — its §10 covers edge cases (pod/PVC deletion mid-backup, missing storage, externally deleted executor pod) that aren't obvious from the code alone.
 
 ### When Stuck
 
