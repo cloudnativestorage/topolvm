@@ -162,8 +162,8 @@ func (e *RestoreExecutor) buildRestoreArgs() []string {
 		fmt.Sprintf("--node-name=%s", e.lv.Spec.NodeName),
 		fmt.Sprintf("--repo-path=%s", e.snapshotLV.Status.Snapshot.Path),
 		fmt.Sprintf("--snapshot-id=%s", e.snapshotLV.Status.Snapshot.SnapshotID),
-		fmt.Sprintf("--snapshot-storage-name=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageName])),
-		fmt.Sprintf("--snapshot-storage-namespace=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageNamespace])),
+		fmt.Sprintf("--snapshot-storage-name=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[topolvmv1.SnapshotStorageName])),
+		fmt.Sprintf("--snapshot-storage-namespace=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[topolvmv1.SnapshotStorageNamespace])),
 	}
 }
 

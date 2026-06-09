@@ -52,9 +52,3 @@ const (
 	// EnvHostName is the environment variable key for the hostname
 	EnvHostName = "HOSTNAME"
 )
-
-// Online Snapshot-related constants
-const (
-	SnapshotStorageNamespace = "topolvm.io/snapshotStorageNamespace"
-	SnapshotStorageName      = "topolvm.io/snapshotStorageName"
-)

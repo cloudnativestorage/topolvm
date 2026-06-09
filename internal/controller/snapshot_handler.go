@@ -502,8 +502,8 @@ func (h *snapshotHandler) validateSnapshotStorageExists(ctx context.Context) err
 	if h.vsClass == nil {
 		return fmt.Errorf("no VolumeSnapshotClass resolved; cannot validate snapshot storage")
 	}
-	storageName := h.vsClass.Parameters[SnapshotStorageName]
-	storageNamespace := h.vsClass.Parameters[SnapshotStorageNamespace]
+	storageName := h.vsClass.Parameters[topolvmv1.SnapshotStorageName]
+	storageNamespace := h.vsClass.Parameters[topolvmv1.SnapshotStorageNamespace]
 	if storageNamespace == "" {
 		storageNamespace = executor.GetPodNamespace()
 	}
@@ -533,8 +533,8 @@ func IsOnlineSnapshotEnabled(args ...any) (bool, error) {
 		return false, nil
 	}
 
-	snapshotMode, exists := vsClass.Parameters[SnapshotMode]
-	return exists && snapshotMode == SnapshotModeOnline, nil
+	snapshotMode, exists := vsClass.Parameters[topolvmv1.SnapshotMode]
+	return exists && snapshotMode == topolvmv1.SnapshotModeOnline, nil
 }
 
 func getVolumeSnapshotInfo(ctx context.Context, getter getter.Interface, lv *topolvmv1.LogicalVolume) (*snapshot_api.VolumeSnapshotContent, *snapshot_api.VolumeSnapshotClass, error) {

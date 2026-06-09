@@ -139,8 +139,8 @@ func (e *DeleteExecutor) buildDeleteArgs() []string {
 	return []string{
 		fmt.Sprintf("--lv-name=%s", e.lv.Name),
 		fmt.Sprintf("--repo-path=%s", e.lv.Status.Snapshot.Path),
-		fmt.Sprintf("--snapshot-storage-name=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageName])),
-		fmt.Sprintf("--snapshot-storage-namespace=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[SnapshotStorageNamespace])),
+		fmt.Sprintf("--snapshot-storage-name=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[topolvmv1.SnapshotStorageName])),
+		fmt.Sprintf("--snapshot-storage-namespace=%s", defaultNamespaceIfEmpty(e.vsClass.Parameters[topolvmv1.SnapshotStorageNamespace])),
 	}
 
 }

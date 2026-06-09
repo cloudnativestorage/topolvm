@@ -153,3 +153,11 @@ const (
 	// ReasonRestoreFailed indicates that restore failed
 	ReasonRestoreFailed string = "RestoreFailed"
 )
+
+// Online Snapshot-related constants
+const (
+	SnapshotModeOnline       = "online"
+	SnapshotMode             = "topolvm.io/snapshot-mode"
+	SnapshotStorageNamespace = "topolvm.io/snapshot-storage-namespace"
+	SnapshotStorageName      = "topolvm.io/snapshot-storage-name"
+)

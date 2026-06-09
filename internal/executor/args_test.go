@@ -24,8 +24,8 @@ import (
 func vsClass(namespace string) *snapshot_api.VolumeSnapshotClass {
 	return &snapshot_api.VolumeSnapshotClass{
 		Parameters: map[string]string{
-			SnapshotStorageName:      "backup-store",
-			SnapshotStorageNamespace: namespace,
+			topolvmv1.SnapshotStorageName:      "backup-store",
+			topolvmv1.SnapshotStorageNamespace: namespace,
 		},
 	}
 }
