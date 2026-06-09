@@ -23,6 +23,14 @@ type FormatOpts struct {
 	Cipher  string
 	KeySize int
 	PBKDF   string
+	// Integrity selects an authenticated-encryption mode. Empty (default)
+	// leaves integrity off. "hmac-sha256" passes --integrity hmac-sha256
+	// to luksFormat so every sector carries an HMAC tag.
+	Integrity string
+	// NoWipe skips the initial integrity wipe. Defaults to false (full
+	// wipe). With NoWipe=true, reads of never-written sectors fail
+	// authentication until written; mkfs initializes most of the device.
+	NoWipe bool
 }
 
 // WithDefaults fills in any unset fields with package defaults.
@@ -39,6 +47,10 @@ func (o FormatOpts) WithDefaults() FormatOpts {
 	return o
 }
 
+// IntegrityHMACSHA256 is the only integrity profile we currently expose; it
+// maps to cryptsetup's --integrity hmac-sha256.
+const IntegrityHMACSHA256 = "hmac-sha256"
+
 // ReencryptOpts controls online master-key reencryption.
 type ReencryptOpts struct {
 	// Cipher is the target cipher; empty preserves the current cipher.
@@ -49,6 +61,13 @@ type ReencryptOpts struct {
 	// HotzoneSize is the cryptsetup --hotzone-size argument used as a
 	// rudimentary throughput limiter. Empty leaves the default.
 	HotzoneSize string
+}
+
+// HeaderProfile describes the on-disk LUKS2 header that an open call would
+// see. Returned by HeaderProfile() and used by the node-side mismatch guard.
+type HeaderProfile struct {
+	Cipher    string
+	Integrity string // "" when integrity is not enabled
 }
 
 // Manager is the surface the node code uses to drive cryptsetup. The exec.go
@@ -64,6 +83,12 @@ type Manager interface {
 	KillSlot(ctx context.Context, device string, slot int, pass SecretBuf) error
 	Reencrypt(ctx context.Context, device string, pass SecretBuf, opts ReencryptOpts) error
 	HeaderUUID(ctx context.Context, device string) (string, error)
+	HeaderProfile(ctx context.Context, device string) (HeaderProfile, error)
+	// IntegritySupported reports whether the running cryptsetup binary and
+	// kernel can format / open LUKS2-with-integrity devices. The node uses
+	// this to fail loudly when a StorageClass requests integrity on an
+	// unsupported node instead of silently falling back.
+	IntegritySupported(ctx context.Context) (bool, error)
 }
 
 // CmdResult captures everything the wrapper needs from a cryptsetup invocation.
@@ -141,9 +166,14 @@ func (m *execManager) Format(ctx context.Context, device string, pass SecretBuf,
 		"--key-size", fmt.Sprintf("%d", opts.KeySize),
 		"--pbkdf", opts.PBKDF,
 		"--batch-mode",
-		device,
-		"--key-file=-",
 	}
+	if opts.Integrity != "" {
+		args = append(args, "--integrity", opts.Integrity)
+		if opts.NoWipe {
+			args = append(args, "--integrity-no-wipe")
+		}
+	}
+	args = append(args, device, "--key-file=-")
 	if err := m.runWithSecret(ctx, args, pass); err != nil {
 		return fmt.Errorf("crypt: luksFormat %s: %w", device, err)
 	}
@@ -276,6 +306,50 @@ func (m *execManager) HeaderUUID(ctx context.Context, device string) (string, er
 		return "", fmt.Errorf("crypt: luksUUID %s: %w", device, err)
 	}
 	return strings.TrimSpace(string(res.Stdout)), nil
+}
+
+// HeaderProfile reports the cipher and integrity profile of the on-disk
+// header. Used by the node to fail mismatched StorageClass / on-disk state.
+func (m *execManager) HeaderProfile(ctx context.Context, device string) (HeaderProfile, error) {
+	res, err := m.runner.Run(ctx, m.binary, []string{"luksDump", device}, nil, nil)
+	if err != nil {
+		return HeaderProfile{}, fmt.Errorf("crypt: luksDump %s: %w", device, err)
+	}
+	hp := HeaderProfile{}
+	for _, line := range strings.Split(string(res.Stdout), "\n") {
+		t := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(t, "Cipher:"):
+			hp.Cipher = strings.TrimSpace(strings.TrimPrefix(t, "Cipher:"))
+		case strings.HasPrefix(t, "Integrity:"):
+			v := strings.TrimSpace(strings.TrimPrefix(t, "Integrity:"))
+			// Older cryptsetup prints "(no)" when integrity is disabled.
+			if v != "(no)" && v != "" {
+				hp.Integrity = v
+			}
+		}
+	}
+	return hp, nil
+}
+
+// IntegritySupported runs `cryptsetup --version` plus a simple cryptsetup
+// help probe. We treat any output mentioning "integrity" in the binary's
+// help / version output as a positive indicator. If the binary cannot be
+// invoked at all, we surface that as the error.
+func (m *execManager) IntegritySupported(ctx context.Context) (bool, error) {
+	res, err := m.runner.Run(ctx, m.binary, []string{"--version"}, nil, nil)
+	if err != nil {
+		return false, fmt.Errorf("crypt: cryptsetup --version: %w", err)
+	}
+	out := strings.ToLower(string(res.Stdout) + string(res.Stderr))
+	if strings.Contains(out, "cryptsetup") {
+		// Probe help for the --integrity flag.
+		help, _ := m.runner.Run(ctx, m.binary, []string{"luksFormat", "--help"}, nil, nil)
+		if strings.Contains(strings.ToLower(string(help.Stdout)+string(help.Stderr)), "--integrity") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // runWithSecret pipes a SecretBuf to stdin without copying it into argv/env.

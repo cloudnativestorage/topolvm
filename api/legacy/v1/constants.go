@@ -60,9 +60,9 @@ const (
 
 // TypeSnapshotBackupStorageFound indicates whether the referenced SnapshotBackupStorage exists.
 const (
-	TypeSnapshotBackupStorageFound               = "SnapshotBackupStorageFound"
-	ReasonSnapshotBackupStorageFound             = "SnapshotBackupStorageFound"
-	ReasonSnapshotBackupStorageNotFound          = "SnapshotBackupStorageNotFound"
+	TypeSnapshotBackupStorageFound      = "SnapshotBackupStorageFound"
+	ReasonSnapshotBackupStorageFound    = "SnapshotBackupStorageFound"
+	ReasonSnapshotBackupStorageNotFound = "SnapshotBackupStorageNotFound"
 )
 
 // TypeSnapshotBackupExecutorEnsured indicates whether the Snapshot Backup Executor is ensured or not.
@@ -152,4 +152,12 @@ const (
 	ReasonRestoreSucceeded string = "RestoreSucceeded"
 	// ReasonRestoreFailed indicates that restore failed
 	ReasonRestoreFailed string = "RestoreFailed"
+)
+
+// Online Snapshot-related constants
+const (
+	SnapshotModeOnline       = "online"
+	SnapshotMode             = "topolvm.io/snapshot-mode"
+	SnapshotStorageNamespace = "topolvm.io/snapshot-storage-namespace"
+	SnapshotStorageName      = "topolvm.io/snapshot-storage-name"
 )

@@ -102,6 +102,19 @@ func GetEncryptionKeySizeKey() string {
 	return fmt.Sprintf("%s/key-size", GetPluginName())
 }
 
+// GetEncryptionIntegrityKey is the StorageClass parameter that selects the
+// LUKS2 integrity profile: "" (off) or "hmac-sha256". Provision-time only.
+func GetEncryptionIntegrityKey() string {
+	return fmt.Sprintf("%s/integrity", GetPluginName())
+}
+
+// GetEncryptionIntegrityNoWipeKey is the StorageClass parameter that
+// requests --integrity-no-wipe; documented caveat in
+// design/tde/TDE-Option-dm-integrity.md.
+func GetEncryptionIntegrityNoWipeKey() string {
+	return fmt.Sprintf("%s/integrity-no-wipe", GetPluginName())
+}
+
 // GetNodeFinalizer returns the name of Node finalizer of TopoLVM
 func GetNodeFinalizer() string {
 	return fmt.Sprintf("%s/node", GetPluginName())

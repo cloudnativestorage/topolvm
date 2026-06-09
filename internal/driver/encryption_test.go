@@ -45,6 +45,71 @@ func TestParseEncryptionParameters_RequiresKeyRef(t *testing.T) {
 	}
 }
 
+func TestParseEncryptionParameters_Integrity(t *testing.T) {
+	params := map[string]string{
+		topolvm.GetEncryptionStorageClassKey():  "true",
+		topolvm.GetEncryptionKeyProviderKey():   "vault",
+		topolvm.GetEncryptionKeyRefKey():        "k",
+		topolvm.GetEncryptionIntegrityKey():     "hmac-sha256",
+		topolvm.GetEncryptionIntegrityNoWipeKey(): "true",
+	}
+	spec, err := parseEncryptionParameters(params)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if spec.Integrity != "hmac-sha256" {
+		t.Fatalf("integrity: %q", spec.Integrity)
+	}
+	if !spec.IntegrityNoWipe {
+		t.Fatal("expected NoWipe=true")
+	}
+}
+
+func TestParseEncryptionParameters_NoWipeRequiresIntegrity(t *testing.T) {
+	params := map[string]string{
+		topolvm.GetEncryptionStorageClassKey():    "true",
+		topolvm.GetEncryptionKeyProviderKey():     "vault",
+		topolvm.GetEncryptionKeyRefKey():          "k",
+		topolvm.GetEncryptionIntegrityNoWipeKey(): "true",
+	}
+	_, err := parseEncryptionParameters(params)
+	if err == nil {
+		t.Fatal("expected error: NoWipe with no integrity")
+	}
+}
+
+func TestParseEncryptionParameters_RejectsUnknownIntegrity(t *testing.T) {
+	params := map[string]string{
+		topolvm.GetEncryptionStorageClassKey(): "true",
+		topolvm.GetEncryptionKeyProviderKey():  "vault",
+		topolvm.GetEncryptionKeyRefKey():       "k",
+		topolvm.GetEncryptionIntegrityKey():    "blake3",
+	}
+	_, err := parseEncryptionParameters(params)
+	if err == nil {
+		t.Fatal("expected error for unsupported integrity")
+	}
+}
+
+func TestIntegrityMatches(t *testing.T) {
+	cases := []struct {
+		onDisk, want string
+		ok           bool
+	}{
+		{"", "", true},
+		{"(no)", "", true},
+		{"none", "", true},
+		{"hmac-sha256", "hmac-sha256", true},
+		{"", "hmac-sha256", false},
+		{"hmac-sha256", "", false},
+	}
+	for _, c := range cases {
+		if got := integrityMatches(c.onDisk, c.want); got != c.ok {
+			t.Fatalf("integrityMatches(%q,%q) = %v, want %v", c.onDisk, c.want, got, c.ok)
+		}
+	}
+}
+
 func TestParseEncryptionParameters_Defaults(t *testing.T) {
 	params := map[string]string{
 		topolvm.GetEncryptionStorageClassKey():  "true",
