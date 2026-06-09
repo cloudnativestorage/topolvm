@@ -1,0 +1,54 @@
+package executor
+
+const (
+	// BackupCommandName is the command name for the online snapshot container
+	// This is the subcommand of the online-snapshotter binary
+	BackupCommandName = "backup"
+
+	// RestoreCommandName is the command name for restoring from an online snapshot
+	// This is the subcommand of the online-snapshotter binary
+	RestoreCommandName = "restore"
+
+	// DeleteCommandName is the command name for deleting/forgetting a snapshot
+	// This is the subcommand of the online-snapshotter binary
+	DeleteCommandName = "delete"
+
+	// DefaultSnapshotImage is the default image used for the snapshot container
+	DefaultSnapshotImage = "topolvm/topolvm:latest"
+
+	// SnapshotContainerName is the name of the snapshot container
+	SnapshotContainerName = "snapshot-executor"
+
+	// RestoreContainerName is the name of the restore container
+	RestoreContainerName = "restore-executor"
+
+	// DeleteContainerName is the name of the delete container
+	DeleteContainerName = "delete-executor"
+
+	SnapshotData    = "snapshot-data"
+	SnapshotDataDir = "snapshot-data-dir"
+
+	// LabelAppKey is the label key for the app
+	LabelAppKey = "app"
+
+	// LabelAppValue is the label value for topolvm
+	LabelAppValue = "topolvm-snapshot"
+
+	// LabelLogicalVolumeKey is the label key for logical volume name
+	LabelLogicalVolumeKey = "topolvm.io/logical-volume"
+
+	// LabelSnapshotPodKey is the label key to identify snapshot pods
+	LabelSnapshotPodKey = "topolvm.io/snapshot-pod"
+
+	// LabelSnapshotOperationKey is the label key for the snapshot
+	// operation the pod is running (Backup / Restore / Delete). The
+	// SnapshotPodReconciler reads this to know which operation to fail
+	// out when the pod disappears.
+	LabelSnapshotOperationKey = "topolvm.io/snapshot-operation"
+
+	// EnvHostNamespace is the environment variable key for the host namespace
+	EnvHostNamespace = "HOST_NAMESPACE"
+
+	// EnvHostName is the environment variable key for the hostname
+	EnvHostName = "HOSTNAME"
+)

@@ -721,7 +721,7 @@ webhook:
   existingCertManagerIssuer: {}
     # group: cert-manager.io
     # kind: Issuer
-    # name: webhook-issuer
+  # name: webhook-issuer
   # webhook.certManager -- If true, cert-manager Certificate and Issuer resources are created
   # to generate the webhook TLS secret. If false, you must provide your own TLS secret
   # (see webhook.secretName).
@@ -740,7 +740,7 @@ webhook:
     # **WARNING**: Modifying objectSelector can affect TopoLVM Pod scheduling. Proceed with caution.
     ## ref: https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/#matching-requests-objectselector
     objectSelector: {}
-      # webhook: topolvm
+    # webhook: topolvm
     # webhook.podMutatingWebhook.ignoreNamespaces -- Namespaces to be ignored by the Pod MutatingWebhook.
     ignoreNamespaces:
       - kube-system

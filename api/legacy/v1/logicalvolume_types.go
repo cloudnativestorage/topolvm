@@ -40,11 +40,91 @@ type LogicalVolumeStatus struct {
 	Code        codes.Code         `json:"code,omitempty"`
 	Message     string             `json:"message,omitempty"`
 	CurrentSize *resource.Quantity `json:"currentSize,omitempty"`
+
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// +optional
+	Snapshot *SnapshotStatus `json:"snapshot,omitempty"`
 }
 
-//+kubebuilder:object:root=true
-//+kubebuilder:subresource:status
-//+kubebuilder:resource:scope=Cluster
+// SnapshotStatus defines the observed state of a backup or restore operation.
+type SnapshotStatus struct {
+	// Operation indicates whether this status is for a backup or a restore.
+	// +optional
+	Operation OperationType `json:"operation,omitempty"`
+	// Phase represents the current phase of the backup or restore operation.
+	Phase OperationPhase `json:"phase"`
+	// StartTime is the time at which the operation was started.
+	StartTime metav1.Time `json:"startTime"`
+	// CompletionTime is the time at which the operation completed (success or failure).
+	// +optional
+	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
+	// Duration is how long operation took to complete.
+	// +optional
+	Duration string `json:"duration,omitempty"`
+	// Progress contains information about the progress of the operation.
+	// +optional
+	Progress *OperationProgress `json:"progress,omitempty"`
+	// Message provides a short description of the snapshot’s state
+	// +optional
+	Message string `json:"message,omitempty"`
+	// Error contains details if the operation encountered an error.
+	// +optional
+	Error *SnapshotError `json:"error,omitempty"`
+	// Path represents the directory inside the SnapshotStorage where this backup was stored.
+	// +optional
+	Path string `json:"path,omitempty"`
+	// Repository is the Restic repository path/url where the snapshot is stored
+	// +optional
+	Repository string `json:"repository,omitempty"`
+	// SnapshotID is the identifier of the Restic snapshot involved in the operation.
+	// +optional
+	SnapshotID string `json:"snapshotID,omitempty"`
+	// Version keeps track of restic binary or backup engine version used
+	// +optional
+	Version string `json:"version,omitempty"`
+}
+
+type OperationProgress struct {
+	// SecondsElapsed represents the seconds elapsed
+	// +optional
+	SecondsElapsed int64 `json:"secondsElapsed,omitempty"`
+
+	// PercentDone represents the percentage of the backup/restore that has been completed
+	//+optional
+	PercentDone string `json:"percentDone,omitempty"`
+
+	// TotalFiles represents the total number of files that need to be transferred during the backup/restore
+	// +optional
+	TotalFiles int64 `json:"totalFiles,omitempty"`
+
+	// FilesDone represents the number of files done
+	// +optional
+	FilesDone int64 `json:"filesDone,omitempty"`
+
+	// TransferDone represents the amount of data has been transferred
+	// +optional
+	TransferDone string `json:"transferDone,omitempty"`
+
+	// Total represents the total amount of data that needs to be transferred during the backup
+	// +optional
+	Total string `json:"total,omitempty"`
+
+	// Speed represents the transfer speed during the backup
+	Speed string `json:"speed,omitempty"`
+}
+
+type SnapshotError struct {
+	Code    string `json:"code,omitempty"`    // e.g., "RepositoryNotReachable", "VolumeMountFailed"
+	Message string `json:"message,omitempty"` // human-readable error
+}
+
+// +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
+// +kubebuilder:resource:scope=Cluster
+// +kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.snapshot.phase"
+// +kubebuilder:printcolumn:name="Progess",type="string",JSONPath=".status.snapshot.progress.percentDone"
 
 // LogicalVolume is the Schema for the logicalvolumes API
 type LogicalVolume struct {

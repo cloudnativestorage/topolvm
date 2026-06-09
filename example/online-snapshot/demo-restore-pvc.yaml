@@ -1,0 +1,39 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: restored-pvc
+  namespace: demo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: topolvm-provisioner-thin
+  dataSourceRef:
+    name: restic-snapshot
+    kind: VolumeSnapshot
+    apiGroup: snapshot.storage.k8s.io
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: restored-pvc-accesor
+  namespace: demo
+
+spec:
+  containers:
+    - name: pause
+      image: ubuntu:22.04
+      command:
+        - bash
+        - -c
+        - |
+          sleep infinity
+      volumeMounts:
+        - mountPath: /data
+          name: volume
+  volumes:
+    - name: volume
+      persistentVolumeClaim:
+        claimName: restored-pvc
