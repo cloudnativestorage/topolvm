@@ -5,6 +5,9 @@ on: "workflow_dispatch"
 jobs:
   release:
     runs-on: "ubuntu-latest"
+    permissions:
+      contents: write
+      packages: write
     steps:
       - name: "Checkout"
         uses: actions/checkout@v6
@@ -36,3 +39,18 @@ jobs:
           config: .cr.yaml
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      # The gh-pages index is only served when GitHub Pages is enabled on the
+      # repository. Also push the chart to GHCR as an OCI artifact so it is
+      # installable without Pages:
+      #   helm install topolvm oci://ghcr.io/cloudnativestorage/charts/topolvm --version <version>
+      - name: "Push chart to GHCR (OCI)"
+        run: |
+          # helm >= 3.8 is required for OCI support; install to /tmp to keep
+          # the chart-releaser helm (pinned above) untouched.
+          curl -fsSL https://get.helm.sh/helm-v3.20.2-linux-amd64.tar.gz \
+            | tar xz -C /tmp --strip-components 1 linux-amd64/helm
+          echo "${{ secrets.GITHUB_TOKEN }}" | /tmp/helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+          /tmp/helm dependency update charts/topolvm
+          /tmp/helm package charts/topolvm -d /tmp/chart-pkg
+          /tmp/helm push /tmp/chart-pkg/topolvm-*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
