@@ -3,7 +3,7 @@ useLegacy: false
 
 image:
   # image.repository -- TopoLVM image repository to use.
-  repository: ghcr.io/topolvm/topolvm-with-sidecar
+  repository: ghcr.io/cloudnativestorage/topolvm-with-sidecar
 
   # image.tag -- TopoLVM image tag to use.
   # @default -- `{{ .Chart.AppVersion }}`
