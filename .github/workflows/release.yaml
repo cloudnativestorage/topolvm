@@ -57,6 +57,10 @@ jobs:
           go-version-file: "go.mod"
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      # The proto stubs are committed; ensure their mtimes are newer than the
+      # .proto after checkout so make does not try to regenerate them (this job
+      # has no protoc, which would fail with exit 127).
+      - run: touch pkg/lvmd/proto/lvmd.pb.go pkg/lvmd/proto/lvmd_grpc.pb.go docs/lvmd-protocol.md
       - run: make build/lvmd TOPOLVM_VERSION=${{ needs.prepare.outputs.version }}
       - run: tar czf lvmd-${{ needs.prepare.outputs.version }}.tar.gz -C ./build lvmd
       - name: "Push branch tag"
