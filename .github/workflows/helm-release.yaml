@@ -5,7 +5,9 @@ name: "Release Charts"
 on: "workflow_dispatch"
 
 permissions:
-  contents: read
+  # contents: write is required to create the topolvm-chart-v<version> tag and
+  # the GitHub Release below.
+  contents: write
   packages: write
 
 env:
@@ -34,10 +36,72 @@ jobs:
         run: |
           helm repo add cert-manager https://charts.jetstack.io
 
-      - name: "Package and push chart to GHCR (OCI)"
+      - name: "Package chart"
+        id: package
+        run: |
+          version=$(helm show chart charts/topolvm | awk '/^version:/ {print $2}')
+          if [ -z "${version}" ]; then
+            echo "::error::Could not determine chart version from charts/topolvm/Chart.yaml" >&2
+            exit 1
+          fi
+          helm dependency update charts/topolvm
+          helm package charts/topolvm -d /tmp/chart-pkg
+          pkg="/tmp/chart-pkg/topolvm-${version}.tgz"
+          if [ ! -f "${pkg}" ]; then
+            echo "::error::Expected packaged chart ${pkg} not found" >&2
+            exit 1
+          fi
+          # Pre-releases (chart versions containing a hyphen, e.g. 17.0.0-ac.1)
+          # are flagged as GitHub pre-releases.
+          if echo "${version}" | grep -q "-"; then prerelease=true; else prerelease=false; fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "package=${pkg}" >> "${GITHUB_OUTPUT}"
+          echo "tag=topolvm-chart-v${version}" >> "${GITHUB_OUTPUT}"
+          echo "prerelease=${prerelease}" >> "${GITHUB_OUTPUT}"
+
+      - name: "Push chart to GHCR (OCI)"
         run: |
           echo "${{ secrets.LGTM_GITHUB_TOKEN }}" | \
             helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
-          helm dependency update charts/topolvm
-          helm package charts/topolvm -d /tmp/chart-pkg
-          helm push /tmp/chart-pkg/topolvm-*.tgz "${CHART_OCI_REPO}"
+          helm push "${{ steps.package.outputs.package }}" "${CHART_OCI_REPO}"
+
+      - name: "Determine previous chart tag"
+        id: previous
+        run: |
+          # Newest existing topolvm-chart-v<x.y.z>[-...] tag, excluding the one
+          # being released, is used as the changelog base (see RELEASE.md).
+          RESP=$(gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/${{ github.repository }}/git/matching-refs/tags/topolvm-chart-v)
+          PREV_TAG=$(echo "${RESP}" | jq -r '.[].ref' | awk -F "/" '{print $3}' | \
+            grep -E "^topolvm-chart-v[0-9]+\.[0-9]+\.[0-9]+" | \
+            grep -vx "${{ steps.package.outputs.tag }}" | sort -V -r | head -n 1)
+          if [ -z "${PREV_TAG}" ]; then
+            echo "::error::Could not determine a previous topolvm-chart-v tag for the changelog" >&2
+            exit 1
+          fi
+          echo "previous_tag=${PREV_TAG}" >> "${GITHUB_OUTPUT}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Create GitHub Release"
+        run: |
+          # Creates the topolvm-chart-v<version> tag (at this commit) and a draft
+          # release with auto-generated notes. Edit and publish it per RELEASE.md.
+          # see https://docs.github.com/en/rest/releases/releases?apiVersion=2022-11-28#create-a-release
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            --method POST \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            /repos/${{ github.repository }}/releases \
+            -f name="Chart ${{ steps.package.outputs.tag }}" \
+            -f tag_name="${{ steps.package.outputs.tag }}" \
+            -f target_commitish="${{ github.sha }}" \
+            -f previous_tag_name="${{ steps.previous.outputs.previous_tag }}" \
+            -F draft=true \
+            -F prerelease=${{ steps.package.outputs.prerelease }} \
+            -F generate_release_notes=true
+          gh release upload "${{ steps.package.outputs.tag }}" "${{ steps.package.outputs.package }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
