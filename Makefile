@@ -156,7 +156,7 @@ distclean: clean ## Clean all on the working directory.
 	rm -rf include/
 	rm -rf testbin/
 	rm -f $(HOME)/.docker/cli-plugins/docker-buildx
-	docker run --privileged --rm tonistiigi/binfmt --uninstall linux/amd64,linux/arm64/v8,linux/ppc64le
+	docker run --privileged --rm tonistiigi/binfmt --uninstall linux/amd64,linux/arm64/v8
 
 ##@ Build
 
@@ -273,7 +273,7 @@ setup: ## Setup local environment.
 setup-docker-buildx: ## Setup docker buildx environment.
 	$(MAKE) $(HOME)/.docker/cli-plugins/docker-buildx
 	# https://github.com/tonistiigi/binfmt
-	docker run --privileged --rm tonistiigi/binfmt --install linux/amd64,linux/arm64/v8,linux/ppc64le
+	docker run --privileged --rm tonistiigi/binfmt --install linux/amd64,linux/arm64/v8
 
 # https://docs.docker.com/build/buildx/install/
 $(HOME)/.docker/cli-plugins/docker-buildx:
