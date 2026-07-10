@@ -126,11 +126,12 @@ func (e *RestoreExecutor) buildRestoreContainer(templateContainer *corev1.Contai
 	}
 
 	// Get volume mounts from template container
-	var volumeMounts []corev1.VolumeMount
-	volumeMounts = append(volumeMounts, corev1.VolumeMount{
-		Name:      SnapshotData,
-		MountPath: SnapshotData,
-	})
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      SnapshotData,
+			MountPath: SnapshotData,
+		},
+	}
 
 	container := corev1.Container{
 		Name:            SnapshotContainerName,
@@ -169,8 +170,9 @@ func (e *RestoreExecutor) buildRestoreArgs() []string {
 
 // buildSnapshotEnv constructs the environment variables for the restore container.
 func (e *RestoreExecutor) buildRestoreEnv() []corev1.EnvVar {
-	var env []corev1.EnvVar
-	env = append(env, corev1.EnvVar{Name: EnvHostNamespace, Value: getNamespace()})
+	env := []corev1.EnvVar{
+		{Name: EnvHostNamespace, Value: getNamespace()},
+	}
 	return env
 }
 

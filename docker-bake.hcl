@@ -11,7 +11,7 @@ variable "TOPOLVM_VERSION" {
 }
 
 variable "PLATFORMS" {
-  default = ["linux/amd64", "linux/arm64/v8", "linux/ppc64le"]
+  default = ["linux/amd64", "linux/arm64/v8"]
 }
 
 group "default" {

@@ -147,8 +147,9 @@ func (e *DeleteExecutor) buildDeleteArgs() []string {
 
 // buildDeleteEnv constructs the environment variables for the delete container.
 func (e *DeleteExecutor) buildDeleteEnv() []corev1.EnvVar {
-	var env []corev1.EnvVar
-	env = append(env, corev1.EnvVar{Name: EnvHostNamespace, Value: getNamespace()})
+	env := []corev1.EnvVar{
+		{Name: EnvHostNamespace, Value: getNamespace()},
+	}
 	return env
 }
 
