@@ -6,7 +6,7 @@ image:
   repository: ghcr.io/cloudnativestorage/topolvm-with-sidecar
 
   # image.reference -- TopoLVM image reference (a tag and/or a digest, e.g. "0.41.0@sha256:...") to use.
-  reference: 0.41.0-ac.1
+  reference: 0.41.0-ac.1@sha256:7459bba61e2baf7a1f3746256b1f0d322533712aad3ccc6134065d5cafce22ca
 
   # image.pullPolicy -- TopoLVM image pullPolicy.
   pullPolicy:  # Always
