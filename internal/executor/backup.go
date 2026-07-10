@@ -200,11 +200,12 @@ func (e *SnapshotExecutor) buildSnapshotContainer(templateContainer *corev1.Cont
 	}
 
 	// Get volume mounts from template container
-	var volumeMounts []corev1.VolumeMount
-	volumeMounts = append(volumeMounts, corev1.VolumeMount{
-		Name:      SnapshotData,
-		MountPath: SnapshotData,
-	})
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      SnapshotData,
+			MountPath: SnapshotData,
+		},
+	}
 
 	container := corev1.Container{
 		Name:            SnapshotContainerName,
@@ -245,8 +246,9 @@ func (e *SnapshotExecutor) buildSnapshotArgs() []string {
 
 // buildSnapshotEnv constructs the environment variables for the snapshot container.
 func (e *SnapshotExecutor) buildSnapshotEnv() []corev1.EnvVar {
-	var env []corev1.EnvVar
-	env = append(env, corev1.EnvVar{Name: EnvHostNamespace, Value: getNamespace()})
+	env := []corev1.EnvVar{
+		{Name: EnvHostNamespace, Value: getNamespace()},
+	}
 	return env
 }
 
