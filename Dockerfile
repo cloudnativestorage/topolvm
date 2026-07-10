@@ -56,10 +56,12 @@ RUN set -x \
   && apt-get -o Acquire::Retries=8 install -y --no-install-recommends apt-transport-https ca-certificates curl bzip2 \
   && rm -rf /var/lib/apt/lists/*
 
-# Download and install restic
+# Download and install restic for the target architecture.
+# restic's asset naming (linux_amd64/arm64/ppc64le) matches Docker's TARGETARCH.
 ARG RESTIC_VERSION=0.18.1
+ARG TARGETARCH
 RUN set -x \
-  && curl -fsSL -o /tmp/restic.bz2 https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2 \
+  && curl -fsSL -o /tmp/restic.bz2 https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${TARGETARCH}.bz2 \
   && bzip2 -d /tmp/restic.bz2 \
   && mv /tmp/restic /bin/restic \
   && chmod 755 /bin/restic
