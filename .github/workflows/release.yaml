@@ -31,7 +31,7 @@ jobs:
       - name: "Export IMAGE_PREFIX"
         id: export_image_prefix
         run: |
-          if [ "${{ secrets.IMAGE_PREFIX }}" != "" ]; then IMAGE_PREFIX=${{ secrets.IMAGE_PREFIX }}; else IMAGE_PREFIX=ghcr.io/topolvm/; fi
+          if [ "${{ secrets.IMAGE_PREFIX }}" != "" ]; then IMAGE_PREFIX=${{ secrets.IMAGE_PREFIX }}; else IMAGE_PREFIX=ghcr.io/cloudnativestorage/; fi
           echo "IMAGE_PREFIX=${IMAGE_PREFIX}" >> ${GITHUB_OUTPUT}
 
   build-images:
@@ -73,8 +73,10 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             /repos/${{ github.repository }}/git/matching-refs/tags/v)
+          # Exclude the tag being released, then pick the newest remaining
+          # v<x.y.z>[-ac.N] tag as the previous release for the changelog.
           PREV_TAG=$(echo ${RESP} | jq -r '.[].ref' | awk -F "/" '{print $3}' | \
-            grep -E "^v[0-9]+\.[0-9]+\.[0-9]+" | sort -V -r | tail -n +2 | head -n 1)
+            grep -E "^v[0-9]+\.[0-9]+\.[0-9]+" | grep -vx "${GITHUB_REF_NAME}" | sort -V -r | head -n 1)
           if [ -z "${PREV_TAG}" ]; then
             echo "PREV_TAG is empty."
             exit 1
