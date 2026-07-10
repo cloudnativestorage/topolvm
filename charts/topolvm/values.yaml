@@ -3,10 +3,10 @@ useLegacy: false
 
 image:
   # image.repository -- TopoLVM image repository to use.
-  repository: ghcr.io/topolvm/topolvm-with-sidecar
+  repository: ghcr.io/cloudnativestorage/topolvm-with-sidecar
 
   # image.reference -- TopoLVM image reference (a tag and/or a digest, e.g. "0.41.0@sha256:...") to use.
-  reference: 0.41.0@sha256:5faf5b94557516ae0f6fa7d329a5a4305e22aa2dc464af7641b31f2aca618036
+  reference: 0.41.0-ac.1
 
   # image.pullPolicy -- TopoLVM image pullPolicy.
   pullPolicy:  # Always
