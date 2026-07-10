@@ -15,8 +15,8 @@ RUN make build-topolvm TOPOLVM_VERSION=${TOPOLVM_VERSION} GOARCH=${TARGETARCH}
 FROM ubuntu:22.04 AS topolvm
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update \
-    && apt-get -y install --no-install-recommends \
+RUN apt-get -o Acquire::Retries=8 update \
+    && apt-get -o Acquire::Retries=8 -y install --no-install-recommends \
         btrfs-progs \
         file \
         xfsprogs \
@@ -41,8 +41,8 @@ FROM --platform=$BUILDPLATFORM build-topolvm AS build-sidecars
 ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN  apt-get update \
-    && apt-get -y install --no-install-recommends \
+RUN  apt-get -o Acquire::Retries=8 update \
+    && apt-get -o Acquire::Retries=8 -y install --no-install-recommends \
         patch
 
 RUN make csi-sidecars GOARCH=${TARGETARCH}
@@ -52,8 +52,8 @@ FROM topolvm AS topolvm-with-sidecar
 
 # Install curl and bzip2
 RUN set -x \
-  && apt-get update \
-  && apt-get install -y --no-install-recommends apt-transport-https ca-certificates curl bzip2 \
+  && apt-get -o Acquire::Retries=8 update \
+  && apt-get -o Acquire::Retries=8 install -y --no-install-recommends apt-transport-https ca-certificates curl bzip2 \
   && rm -rf /var/lib/apt/lists/*
 
 # Download and install restic
