@@ -16,6 +16,8 @@ import (
 	topolvmlegacyv1 "github.com/topolvm/topolvm/api/legacy/v1"
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
 	clientwrapper "github.com/topolvm/topolvm/internal/client"
+	"github.com/topolvm/topolvm/internal/crypt"
+	"github.com/topolvm/topolvm/internal/keyprovider"
 	"github.com/topolvm/topolvm/internal/runners"
 	"github.com/topolvm/topolvm/pkg/controller"
 	"github.com/topolvm/topolvm/pkg/driver"
@@ -149,7 +151,33 @@ func subMain(ctx context.Context) error {
 	// Add gRPC server to manager.
 	grpcServer := grpc.NewServer(grpc.UnaryInterceptor(ErrorLoggingInterceptor))
 	csi.RegisterIdentityServer(grpcServer, driver.NewIdentityServer(checker.Ready))
-	nodeServer, err := driver.NewNodeServer(nodename, vgService, lvService, mgr) // adjusted signature
+	var encDeps *driver.EncryptionDeps
+	if config.encryptionEnabled {
+		if config.keyProviderName == "" {
+			return fmt.Errorf("--key-provider is required when --encryption-enabled is true")
+		}
+		kp, err := keyprovider.New(config.keyProviderName, config.keyProviderConfig)
+		if err != nil {
+			return fmt.Errorf("initialize key provider %q: %w", config.keyProviderName, err)
+		}
+		cm := crypt.NewManager(config.cryptsetupPath)
+		encDeps = &driver.EncryptionDeps{
+			CryptManager: cm,
+			KeyProvider:  kp,
+		}
+		// Node-side worker that runs cryptsetup reencrypt when an LV
+		// transitions to state=Reencrypting. It resolves devicePath
+		// from the LV's volumeID using the legacy /dev/topolvm/<uuid>
+		// layout that lvmd produces.
+		if err := controller.SetupLVReencryptWorker(mgr, cm, kp, nodename, config.reencryptMaxConcurrentPerNode, func(volumeID string) string {
+			return topolvm.LegacyDeviceDirectory + "/" + volumeID
+		}); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "LVReencryptWorker")
+			return err
+		}
+		setupLog.Info("encryption enabled", "provider", config.keyProviderName, "cryptsetup", config.cryptsetupPath, "reencryptMaxPerNode", config.reencryptMaxConcurrentPerNode)
+	}
+	nodeServer, err := driver.NewNodeServerWithEncryption(nodename, vgService, lvService, mgr, encDeps)
 	if err != nil {
 		return err
 	}

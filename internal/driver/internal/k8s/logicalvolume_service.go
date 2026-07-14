@@ -156,7 +156,22 @@ func NewLogicalVolumeService(mgr manager.Manager) (*LogicalVolumeService, error)
 
 // CreateVolume creates volume
 func (s *LogicalVolumeService) CreateVolume(ctx context.Context, node, dc, oc, name, sourceName string, requestBytes int64) (*topolvmv1.LogicalVolume, error) {
-	logger.Info("k8s.CreateVolume called", "name", name, "node", node, "size", requestBytes, "sourceName", sourceName)
+	return s.CreateVolumeWithEncryption(ctx, node, dc, oc, name, sourceName, requestBytes, nil, "")
+}
+
+// CreateVolumeWithEncryption is the encryption-aware variant of CreateVolume.
+// When encSpec is non-nil and enabled, the LogicalVolume is created with the
+// spec populated and the status seeded so the node can resolve the key on
+// first publish. activeKeyID names the EncryptionKey object that the
+// controller has already created (or will create alongside this LV).
+func (s *LogicalVolumeService) CreateVolumeWithEncryption(
+	ctx context.Context,
+	node, dc, oc, name, sourceName string,
+	requestBytes int64,
+	encSpec *topolvmv1.EncryptionSpec,
+	activeKeyID string,
+) (*topolvmv1.LogicalVolume, error) {
+	logger.Info("k8s.CreateVolume called", "name", name, "node", node, "size", requestBytes, "sourceName", sourceName, "encrypted", encSpec != nil && encSpec.Enabled)
 	var lv *topolvmv1.LogicalVolume
 	// if the create volume request has no source, proceed with regular lv creation.
 	if sourceName == "" {
@@ -191,7 +206,52 @@ func (s *LogicalVolumeService) CreateVolume(ctx context.Context, node, dc, oc, n
 		}
 	}
 
-	return s.createAndWait(ctx, lv)
+	if encSpec != nil && encSpec.Enabled {
+		lv.Spec.Encryption = encSpec.DeepCopy()
+	}
+
+	created, err := s.createAndWait(ctx, lv)
+	if err != nil {
+		return nil, err
+	}
+	if encSpec != nil && encSpec.Enabled && activeKeyID != "" {
+		if err := s.patchEncryptionStatus(ctx, created.Name, activeKeyID); err != nil {
+			return nil, err
+		}
+	}
+	return created, nil
+}
+
+// GetByName fetches an LV by its k8s object name into out.
+func (s *LogicalVolumeService) GetByName(ctx context.Context, name string, out *topolvmv1.LogicalVolume) error {
+	return s.getter.Get(ctx, client.ObjectKey{Name: name}, out)
+}
+
+// UpdateStatus updates the status subresource of the given LV. Used by the
+// node-side encryption coordinator to record headerUUID, state transitions.
+func (s *LogicalVolumeService) UpdateStatus(ctx context.Context, lv *topolvmv1.LogicalVolume) error {
+	return s.writer.Status().Update(ctx, lv)
+}
+
+// patchEncryptionStatus initializes lv.status.encryption with the active key id
+// so the node knows which EncryptionKey to consume at first publish.
+func (s *LogicalVolumeService) patchEncryptionStatus(ctx context.Context, lvName, activeKeyID string) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var lv topolvmv1.LogicalVolume
+		if err := s.getter.Get(ctx, client.ObjectKey{Name: lvName}, &lv); err != nil {
+			return err
+		}
+		if lv.Status.Encryption == nil {
+			lv.Status.Encryption = &topolvmv1.EncryptionStatus{}
+		}
+		if lv.Status.Encryption.State == "" {
+			lv.Status.Encryption.State = topolvmv1.EncryptionPending
+		}
+		if lv.Status.Encryption.ActiveKeyID == "" {
+			lv.Status.Encryption.ActiveKeyID = activeKeyID
+		}
+		return s.writer.Status().Update(ctx, &lv)
+	})
 }
 
 // DeleteVolume deletes volume
@@ -238,7 +298,20 @@ func (s *LogicalVolumeService) DeleteVolume(ctx context.Context, volumeID string
 // CreateSnapshot creates a snapshot of existing volume.
 func (s *LogicalVolumeService) CreateSnapshot(ctx context.Context, node, dc, sourceVol, sname,
 	accessType string, snapSize resource.Quantity) (*topolvmv1.LogicalVolume, bool, error) {
-	logger.Info("CreateSnapshot called", "name", sname)
+	return s.CreateSnapshotWithEncryption(ctx, node, dc, sourceVol, sname, accessType, snapSize, nil, "")
+}
+
+// CreateSnapshotWithEncryption is the encryption-aware variant of CreateSnapshot.
+// When encSpec is non-nil and enabled, the snapshot LV is created with the
+// encryption metadata that pins it to a copy of the source EncryptionKey.
+func (s *LogicalVolumeService) CreateSnapshotWithEncryption(
+	ctx context.Context,
+	node, dc, sourceVol, sname, accessType string,
+	snapSize resource.Quantity,
+	encSpec *topolvmv1.EncryptionSpec,
+	activeKeyID string,
+) (*topolvmv1.LogicalVolume, bool, error) {
+	logger.Info("CreateSnapshot called", "name", sname, "encrypted", encSpec != nil && encSpec.Enabled)
 	snapshotLV := &topolvmv1.LogicalVolume{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: sname,
@@ -252,10 +325,18 @@ func (s *LogicalVolumeService) CreateSnapshot(ctx context.Context, node, dc, sou
 			AccessType:  accessType,
 		},
 	}
+	if encSpec != nil && encSpec.Enabled {
+		snapshotLV.Spec.Encryption = encSpec.DeepCopy()
+	}
 
 	newLV, err := s.createAndWait(ctx, snapshotLV)
 	if err != nil {
 		return nil, false, err
+	}
+	if encSpec != nil && encSpec.Enabled && activeKeyID != "" {
+		if err := s.patchEncryptionStatus(ctx, newLV.Name, activeKeyID); err != nil {
+			return nil, false, err
+		}
 	}
 
 	enable, err := controller.IsOnlineSnapshotEnabled(ctx, s.getter, newLV)

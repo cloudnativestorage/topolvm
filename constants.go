@@ -71,6 +71,50 @@ func GetLogicalVolumeFinalizer() string {
 	return fmt.Sprintf("%s/logicalvolume", GetPluginName())
 }
 
+// GetEncryptionKeyFinalizer returns the name of the EncryptionKey protection finalizer.
+// An EncryptionKey with non-empty Consumers must not be deleted while pinned.
+func GetEncryptionKeyFinalizer() string {
+	return fmt.Sprintf("%s/encryptionkey-protection", GetPluginName())
+}
+
+// EncryptionStorageClassKey reports whether the StorageClass requests encryption.
+func GetEncryptionStorageClassKey() string {
+	return fmt.Sprintf("%s/encryption", GetPluginName())
+}
+
+// GetEncryptionKeyProviderKey is the StorageClass parameter that names the KeyProvider.
+func GetEncryptionKeyProviderKey() string {
+	return fmt.Sprintf("%s/key-provider", GetPluginName())
+}
+
+// GetEncryptionKeyRefKey is the StorageClass parameter that holds the provider KEK identifier.
+func GetEncryptionKeyRefKey() string {
+	return fmt.Sprintf("%s/key-ref", GetPluginName())
+}
+
+// GetEncryptionCipherKey is the StorageClass parameter that selects the LUKS cipher.
+func GetEncryptionCipherKey() string {
+	return fmt.Sprintf("%s/cipher", GetPluginName())
+}
+
+// GetEncryptionKeySizeKey is the StorageClass parameter that selects the LUKS key size in bits.
+func GetEncryptionKeySizeKey() string {
+	return fmt.Sprintf("%s/key-size", GetPluginName())
+}
+
+// GetEncryptionIntegrityKey is the StorageClass parameter that selects the
+// LUKS2 integrity profile: "" (off) or "hmac-sha256". Provision-time only.
+func GetEncryptionIntegrityKey() string {
+	return fmt.Sprintf("%s/integrity", GetPluginName())
+}
+
+// GetEncryptionIntegrityNoWipeKey is the StorageClass parameter that
+// requests --integrity-no-wipe; documented caveat in
+// design/tde/TDE-Option-dm-integrity.md.
+func GetEncryptionIntegrityNoWipeKey() string {
+	return fmt.Sprintf("%s/integrity-no-wipe", GetPluginName())
+}
+
 // GetNodeFinalizer returns the name of Node finalizer of TopoLVM
 func GetNodeFinalizer() string {
 	return fmt.Sprintf("%s/node", GetPluginName())

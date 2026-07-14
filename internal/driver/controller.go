@@ -12,6 +12,7 @@ import (
 	"github.com/topolvm/topolvm"
 	v1 "github.com/topolvm/topolvm/api/v1"
 	"github.com/topolvm/topolvm/internal/driver/internal/k8s"
+	"github.com/topolvm/topolvm/internal/keyprovider"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -34,6 +35,13 @@ type ControllerServerSettings struct {
 
 // NewControllerServer returns a new ControllerServer.
 func NewControllerServer(mgr manager.Manager, settings ControllerServerSettings) (csi.ControllerServer, error) {
+	return NewControllerServerWithEncryption(mgr, settings, nil)
+}
+
+// NewControllerServerWithEncryption returns a new ControllerServer that, when
+// keyProvider is non-nil, generates per-volume DEKs and EncryptionKey CRs
+// during CreateVolume for StorageClasses that opt in.
+func NewControllerServerWithEncryption(mgr manager.Manager, settings ControllerServerSettings, keyProvider keyprovider.KeyProvider) (csi.ControllerServer, error) {
 	lvService, err := k8s.NewLogicalVolumeService(mgr)
 	if err != nil {
 		return nil, err
@@ -45,6 +53,8 @@ func NewControllerServer(mgr manager.Manager, settings ControllerServerSettings)
 		server: &controllerServerNoLocked{
 			lvService:   lvService,
 			nodeService: k8s.NewNodeService(mgr.GetClient()),
+			encKeys:     k8s.NewEncryptionKeyService(mgr),
+			keyProvider: keyProvider,
 			settings:    settings,
 		},
 	}, nil
@@ -144,6 +154,8 @@ type controllerServerNoLocked struct {
 
 	lvService   *k8s.LogicalVolumeService
 	nodeService *k8s.NodeService
+	encKeys     *k8s.EncryptionKeyService
+	keyProvider keyprovider.KeyProvider
 
 	settings ControllerServerSettings
 }
@@ -277,7 +289,31 @@ func (s controllerServerNoLocked) CreateVolume(ctx context.Context, req *csi.Cre
 	}
 	name = strings.ToLower(name)
 
-	volume, err := s.lvService.CreateVolume(ctx, node, deviceClass, lvcreateOptionClass, name, sourceName, requestCapacityBytes)
+	encSpec, err := parseEncryptionParameters(req.GetParameters())
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	if encSpec != nil && s.keyProvider == nil {
+		return nil, status.Error(codes.FailedPrecondition, "storage class requests encryption but topolvm-controller has no key provider configured")
+	}
+
+	// For encrypted clones/restores, the new volume inherits the source's
+	// LUKS header (it is a block-level copy of ciphertext). The encryption
+	// spec comes from the source; per the design, we re-key on first stage.
+	if encSpec == nil && sourceVol != nil && sourceVol.Spec.Encryption != nil && sourceVol.Spec.Encryption.Enabled {
+		encSpec = sourceVol.Spec.Encryption.DeepCopy()
+	}
+
+	var activeKeyID string
+	if encSpec != nil && encSpec.Enabled {
+		activeKeyID = EncryptionKeyObjectName(name)
+		if err := s.provisionEncryptionKey(ctx, name, encSpec, activeKeyID); err != nil {
+			ctrlLogger.Error(err, "failed to provision EncryptionKey", "name", name)
+			return nil, status.Errorf(codes.Internal, "provision encryption key: %v", err)
+		}
+	}
+
+	volume, err := s.lvService.CreateVolumeWithEncryption(ctx, node, deviceClass, lvcreateOptionClass, name, sourceName, requestCapacityBytes, encSpec, activeKeyID)
 	if err != nil {
 		_, ok := status.FromError(err)
 		if !ok {
@@ -298,6 +334,43 @@ func (s controllerServerNoLocked) CreateVolume(ctx context.Context, req *csi.Cre
 			},
 		},
 	}, nil
+}
+
+// pinEncryptionKeyForSnapshot copies the origin's EncryptionKey (wrapped DEK +
+// keyslot + KEK version) into a new object owned by the snapshot. The snapshot
+// is appended to both keys' consumer lists so retention finalizers protect the
+// wrapped blob until every consumer is gone.
+func (s controllerServerNoLocked) pinEncryptionKeyForSnapshot(ctx context.Context, srcKey *v1.EncryptionKey, snapKeyName, snapshotID string) error {
+	if s.encKeys == nil {
+		return errors.New("encryption key service not wired")
+	}
+	wrappedDEK, err := base64DecodeStored(srcKey.Status.WrappedDEK)
+	if err != nil {
+		return fmt.Errorf("decode source wrappedDEK: %w", err)
+	}
+	if _, err := s.encKeys.Create(ctx, snapKeyName, srcKey.Spec.Provider, srcKey.Spec.KeyRef, srcKey.Status.BoundVolumeID, wrappedDEK, srcKey.Status.KEKVersion, srcKey.Status.Keyslot, []string{snapshotID}); err != nil {
+		return err
+	}
+	// Also append the snapshot to the source key consumers so a later
+	// rotation/deletion of the source still protects the pinned blob.
+	return s.encKeys.AddConsumer(ctx, srcKey.Name, snapshotID)
+}
+
+// provisionEncryptionKey generates a fresh DEK, wraps it with the configured
+// KeyProvider, and persists the ciphertext in an EncryptionKey CR. The
+// plaintext is destroyed before returning; only ciphertext leaves this scope.
+func (s controllerServerNoLocked) provisionEncryptionKey(ctx context.Context, volumeID string, encSpec *v1.EncryptionSpec, keyName string) error {
+	if s.keyProvider == nil {
+		return fmt.Errorf("no key provider configured")
+	}
+	plain, wrapped, err := s.keyProvider.GenerateDEK(ctx, keyprovider.KeyOpts{VolumeID: volumeID, KeyRef: encSpec.KeyRef})
+	if err != nil {
+		return fmt.Errorf("generate DEK: %w", err)
+	}
+	plain.Destroy()
+
+	_, err = s.encKeys.Create(ctx, keyName, encSpec.Provider, encSpec.KeyRef, volumeID, wrapped.Ciphertext, wrapped.KEKVersion, 0, []string{volumeID})
+	return err
 }
 
 // validateContentSource checks if the request has a data source and returns source volume information.
@@ -375,7 +448,32 @@ func (s controllerServerNoLocked) CreateSnapshot(ctx context.Context, req *csi.C
 	deviceClass := sourceVol.Spec.DeviceClass
 	sourceVolName := sourceVol.Spec.Name
 	currentSize := sourceVol.Status.CurrentSize
-	snapshot, readToUse, err := s.lvService.CreateSnapshot(ctx, node, deviceClass, sourceVolName, name, accessType, *currentSize)
+
+	// If the origin is encrypted, pin its EncryptionKey for the snapshot
+	// before we let lvmd take the block-level thin snapshot. The thin
+	// snapshot inherits the origin's LUKS header, so the snapshot must
+	// be openable with the same wrapped DEK at restore time.
+	var snapEncSpec *v1.EncryptionSpec
+	var snapActiveKey string
+	if sourceVol.Spec.Encryption != nil && sourceVol.Spec.Encryption.Enabled {
+		if s.encKeys == nil {
+			return nil, status.Error(codes.FailedPrecondition, "source volume is encrypted but topolvm-controller has no encryption services wired")
+		}
+		if sourceVol.Status.Encryption == nil || sourceVol.Status.Encryption.ActiveKeyID == "" {
+			return nil, status.Error(codes.FailedPrecondition, "source volume is encrypted but has no active EncryptionKey")
+		}
+		srcKey, err := s.encKeys.Get(ctx, sourceVol.Status.Encryption.ActiveKeyID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "fetch source EncryptionKey: %v", err)
+		}
+		snapActiveKey = EncryptionKeyObjectName(name)
+		if err := s.pinEncryptionKeyForSnapshot(ctx, srcKey, snapActiveKey, name); err != nil {
+			return nil, status.Errorf(codes.Internal, "pin EncryptionKey for snapshot: %v", err)
+		}
+		snapEncSpec = sourceVol.Spec.Encryption.DeepCopy()
+	}
+
+	snapshot, readToUse, err := s.lvService.CreateSnapshotWithEncryption(ctx, node, deviceClass, sourceVolName, name, accessType, *currentSize, snapEncSpec, snapActiveKey)
 	if err != nil {
 		_, ok := status.FromError(err)
 		if !ok {
@@ -402,6 +500,30 @@ func (s controllerServerNoLocked) DeleteSnapshot(ctx context.Context, req *csi.D
 
 	if req.GetSnapshotId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "missing snapshot id")
+	}
+
+	// Detach the snapshot from the pinned EncryptionKey before deleting
+	// the underlying LV, so the key's consumer list can drain and the GC
+	// path can collect it once no other consumer remains.
+	if s.encKeys != nil {
+		snap, err := s.lvService.GetVolume(ctx, req.GetSnapshotId())
+		if err == nil && snap.Status.Encryption != nil && snap.Status.Encryption.ActiveKeyID != "" {
+			snapID := req.GetSnapshotId()
+			if err := s.encKeys.RemoveConsumer(ctx, snap.Status.Encryption.ActiveKeyID, snapID); err != nil {
+				ctrlLogger.Error(err, "remove snapshot consumer", "key", snap.Status.Encryption.ActiveKeyID)
+			}
+			if err := s.encKeys.MaybeDelete(ctx, snap.Status.Encryption.ActiveKeyID); err != nil {
+				ctrlLogger.Error(err, "garbage-collect snapshot EncryptionKey", "key", snap.Status.Encryption.ActiveKeyID)
+			}
+			// Also drop the snapshot from the source key's consumer list
+			// if it was retained there for compounded protection.
+			if snap.Spec.Source != "" {
+				if src, err := s.lvService.GetVolume(ctx, snap.Spec.Source); err == nil &&
+					src.Status.Encryption != nil && src.Status.Encryption.ActiveKeyID != "" {
+					_ = s.encKeys.RemoveConsumer(ctx, src.Status.Encryption.ActiveKeyID, snapID)
+				}
+			}
+		}
 	}
 
 	if err := s.lvService.DeleteVolume(ctx, req.GetSnapshotId()); err != nil {
@@ -480,6 +602,20 @@ func (s controllerServerNoLocked) DeleteVolume(ctx context.Context, req *csi.Del
 		"num_secrets", len(req.GetSecrets()))
 	if len(req.GetVolumeId()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "volume_id is not provided")
+	}
+
+	// Best-effort: drop the volume from the EncryptionKey's consumer list
+	// before deleting the LV. Snapshots that pin the same key remain protected.
+	if s.encKeys != nil {
+		lv, lvErr := s.lvService.GetVolume(ctx, req.GetVolumeId())
+		if lvErr == nil && lv.Status.Encryption != nil && lv.Status.Encryption.ActiveKeyID != "" {
+			if err := s.encKeys.RemoveConsumer(ctx, lv.Status.Encryption.ActiveKeyID, req.GetVolumeId()); err != nil {
+				ctrlLogger.Error(err, "failed to remove EncryptionKey consumer", "key", lv.Status.Encryption.ActiveKeyID, "volume", req.GetVolumeId())
+			}
+			if err := s.encKeys.MaybeDelete(ctx, lv.Status.Encryption.ActiveKeyID); err != nil {
+				ctrlLogger.Error(err, "failed to garbage-collect EncryptionKey", "key", lv.Status.Encryption.ActiveKeyID)
+			}
+		}
 	}
 
 	err := s.lvService.DeleteVolume(ctx, req.GetVolumeId())

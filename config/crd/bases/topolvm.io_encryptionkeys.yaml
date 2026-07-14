@@ -1,0 +1,112 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: encryptionkeys.topolvm.io
+spec:
+  group: topolvm.io
+  names:
+    kind: EncryptionKey
+    listKind: EncryptionKeyList
+    plural: encryptionkeys
+    shortNames:
+    - enckey
+    singular: encryptionkey
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.provider
+      name: Provider
+      type: string
+    - jsonPath: .status.kekVersion
+      name: KEKVersion
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          EncryptionKey is the Schema for the encryptionkeys API. It stores only the
+          wrapped (ciphertext) per-volume passphrase. Plaintext key material lives
+          only inside the kernel device-mapper context while a volume is open.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: EncryptionKeySpec configures which external key custody backend
+              wraps the DEK.
+            properties:
+              keyRef:
+                description: KeyRef is the provider-specific KEK identifier.
+                type: string
+              provider:
+                description: Provider is the KeyProvider name (vault, aws-kms, gcp-kms,
+                  azure-kv, pkcs11).
+                type: string
+            required:
+            - keyRef
+            - provider
+            type: object
+          status:
+            description: |-
+              EncryptionKeyStatus holds the wrapped DEK (ciphertext only) and bookkeeping
+              used to bind the key to the consuming volumes and to drive KEK rotation.
+            properties:
+              boundVolumeID:
+                description: |-
+                  BoundVolumeID is the encryption-context binding (the CSI volume id at
+                  provisioning time, used as the provider's encryption context).
+                type: string
+              consumers:
+                description: Consumers lists the volumes/snapshots depending on this
+                  key.
+                items:
+                  type: string
+                type: array
+              kekVersion:
+                description: KEKVersion is the provider version used to wrap the DEK.
+                type: string
+              keyslot:
+                description: Keyslot records which LUKS2 keyslot this passphrase occupies.
+                format: int32
+                type: integer
+              lastRewrapAt:
+                description: LastRewrapAt records the most recent successful KEK rewrap.
+                format: date-time
+                type: string
+              retiredAt:
+                description: |-
+                  RetiredAt is set when this key has been superseded but is still pinned
+                  by a snapshot or other consumer.
+                format: date-time
+                type: string
+              wrappedDEK:
+                description: |-
+                  WrappedDEK is the base64-encoded ciphertext of the LUKS passphrase
+                  wrapped by the provider's current KEK. Never plaintext.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

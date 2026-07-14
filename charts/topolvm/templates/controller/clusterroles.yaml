@@ -48,6 +48,8 @@ rules:
   - "{{ include "topolvm.pluginName" . }}"
   resources:
   - logicalvolumes
+  - encryptionkeys
+  - reencryptrequests
   verbs:
   - create
   - delete
@@ -60,6 +62,8 @@ rules:
   - topolvm.io
   resources:
   - logicalvolumes/status
+  - encryptionkeys/status
+  - reencryptrequests/status
   verbs:
   - get
   - patch

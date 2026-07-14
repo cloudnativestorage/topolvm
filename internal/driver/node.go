@@ -13,8 +13,10 @@ import (
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/topolvm/topolvm"
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
+	"github.com/topolvm/topolvm/internal/crypt"
 	"github.com/topolvm/topolvm/internal/driver/internal/k8s"
 	"github.com/topolvm/topolvm/internal/filesystem"
+	"github.com/topolvm/topolvm/internal/keyprovider"
 	"github.com/topolvm/topolvm/internal/lvmd/command"
 	"github.com/topolvm/topolvm/pkg/lvmd/proto"
 	"golang.org/x/sys/unix"
@@ -34,9 +36,20 @@ var nodeLogger = ctrl.Log.WithName("driver").WithName("node")
 
 // NewNodeServer returns a new NodeServer.
 func NewNodeServer(nodeName string, vgServiceClient proto.VGServiceClient, lvServiceClient proto.LVServiceClient, mgr manager.Manager) (csi.NodeServer, error) {
+	return NewNodeServerWithEncryption(nodeName, vgServiceClient, lvServiceClient, mgr, nil)
+}
+
+// NewNodeServerWithEncryption is the encryption-aware NodeServer constructor.
+// When enc is nil, the legacy unencrypted code path is taken for every volume.
+func NewNodeServerWithEncryption(nodeName string, vgServiceClient proto.VGServiceClient, lvServiceClient proto.LVServiceClient, mgr manager.Manager, enc *EncryptionDeps) (csi.NodeServer, error) {
 	lvService, err := k8s.NewLogicalVolumeService(mgr)
 	if err != nil {
 		return nil, err
+	}
+
+	var coord *encryptionCoordinator
+	if enc != nil && enc.CryptManager != nil && enc.KeyProvider != nil {
+		coord = newEncryptionCoordinator(enc.CryptManager, enc.KeyProvider, k8s.NewEncryptionKeyService(mgr), lvService)
 	}
 
 	return &nodeServer{
@@ -45,12 +58,19 @@ func NewNodeServer(nodeName string, vgServiceClient proto.VGServiceClient, lvSer
 			client:       vgServiceClient,
 			lvService:    lvServiceClient,
 			k8sLVService: lvService,
+			encryption:   coord,
 			mounter: mountutil.SafeFormatAndMount{
 				Interface: mountutil.New(""),
 				Exec:      utilexec.New(),
 			},
 		},
 	}, nil
+}
+
+// EncryptionDeps is the surface the node binary uses to opt into TDE.
+type EncryptionDeps struct {
+	CryptManager crypt.Manager
+	KeyProvider  keyprovider.KeyProvider
 }
 
 // This is a wrapper for nodeServerNoLocked to protect concurrent method calls.
@@ -112,6 +132,7 @@ type nodeServerNoLocked struct {
 	client       proto.VGServiceClient
 	lvService    proto.LVServiceClient
 	k8sLVService *k8s.LogicalVolumeService
+	encryption   *encryptionCoordinator
 	mounter      mountutil.SafeFormatAndMount
 }
 
@@ -172,6 +193,17 @@ func (s *nodeServerNoLocked) NodePublishVolume(ctx context.Context, req *csi.Nod
 		return nil, status.Errorf(codes.NotFound, "failed to find LV: %s", volumeID)
 	}
 
+	// If the LV is encrypted, format on first stage (if needed), open the
+	// LUKS device, and rewrite lv.Path to the mapper device so the
+	// downstream filesystem / block publish paths target plaintext.
+	mapperPath, err := s.ensureEncryptedOpen(ctx, lvr, lv.GetPath())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "encryption setup failed for %s: %v", volumeID, err)
+	}
+	if mapperPath != "" {
+		lv.Path = mapperPath
+	}
+
 	if isBlockVol {
 		err = s.nodePublishBlockVolume(req, lv)
 	} else if isFsVol {
@@ -181,6 +213,28 @@ func (s *nodeServerNoLocked) NodePublishVolume(ctx context.Context, req *csi.Nod
 		return nil, err
 	}
 	return &csi.NodePublishVolumeResponse{}, nil
+}
+
+// ensureEncryptedOpen handles the LUKS format/open dance for encrypted LVs.
+// Returns the mapper device path when encryption is active; empty string when
+// the LV is unencrypted (the legacy path is byte-identical in that case).
+func (s *nodeServerNoLocked) ensureEncryptedOpen(ctx context.Context, lvr *topolvmv1.LogicalVolume, devicePath string) (string, error) {
+	if lvr.Spec.Encryption == nil || !lvr.Spec.Encryption.Enabled {
+		return "", nil
+	}
+	if s.encryption == nil || !s.encryption.enabled() {
+		return "", fmt.Errorf("encrypted volume %s requires encryption support but topolvm-node was not started with --encryption-enabled", lvr.Status.VolumeID)
+	}
+	rk, err := s.encryption.unwrap(ctx, lvr)
+	if err != nil {
+		return "", err
+	}
+	defer rk.pass.Destroy()
+	mp, err := s.encryption.openOrFormat(ctx, lvr, devicePath, rk)
+	if err != nil {
+		return "", err
+	}
+	return mp, nil
 }
 
 func makeMountOptions(readOnly bool, mountOption *csi.VolumeCapability_MountVolume) ([]string, error) {
@@ -350,7 +404,44 @@ func (s *nodeServerNoLocked) NodeUnpublishVolume(ctx context.Context, req *csi.N
 	if err != nil {
 		return nil, err
 	}
+	// After unmount, close any open LUKS mapping so the master key is
+	// dropped from the kernel. Best-effort: an encrypted volume that is
+	// not actually open will return cleanly via IsOpen=false.
+	if err := s.closeEncryptedIfAny(ctx, volumeID); err != nil {
+		nodeLogger.Error(err, "failed to close encrypted mapping", "volume_id", volumeID)
+		return nil, status.Errorf(codes.Internal, "close encrypted mapping: %v", err)
+	}
 	return &csi.NodeUnpublishVolumeResponse{}, nil
+}
+
+// resizeEncryptedMapping grows the dm-crypt mapping for an encrypted volume.
+// Must be called after the ciphertext LV has been extended (controller-side
+// ExpandVolume + lvmd lvextend) and before the filesystem is resized on the
+// mapper device.
+func (s *nodeServerNoLocked) resizeEncryptedMapping(ctx context.Context, lvr *topolvmv1.LogicalVolume) error {
+	if s.encryption == nil || !s.encryption.enabled() {
+		return fmt.Errorf("encrypted volume %s requires encryption support but topolvm-node was not started with --encryption-enabled", lvr.Status.VolumeID)
+	}
+	rk, err := s.encryption.unwrap(ctx, lvr)
+	if err != nil {
+		return err
+	}
+	defer rk.pass.Destroy()
+	dm := dmName(lvr.Status.VolumeID)
+	return s.encryption.crypt.Resize(ctx, dm, rk.pass)
+}
+
+// closeEncryptedIfAny closes the dm-crypt mapping for volumeID if the LV is
+// encrypted and the mapping is currently open. Returns nil when there is
+// nothing to do (legacy unencrypted volume or no open mapping).
+func (s *nodeServerNoLocked) closeEncryptedIfAny(ctx context.Context, volumeID string) error {
+	if s.encryption == nil || !s.encryption.enabled() {
+		return nil
+	}
+	// We don't strictly need the LV CR to call close; IsOpen + Close is
+	// keyed by dm-name only. Skip the lookup to keep unmount cheap and
+	// resilient when the LV CR is already gone.
+	return s.encryption.close(ctx, volumeID)
 }
 
 func (s *nodeServerNoLocked) nodeUnpublishFilesystemVolume(req *csi.NodeUnpublishVolumeRequest) error {
@@ -508,6 +599,16 @@ func (s *nodeServerNoLocked) NodeExpandVolume(ctx context.Context, req *csi.Node
 	}
 	if lv == nil {
 		return nil, status.Errorf(codes.NotFound, "failed to find LV: %s", volumeID)
+	}
+
+	// For encrypted volumes, grow the dm-crypt mapping before the
+	// filesystem; the resize2fs/xfs_growfs that follows targets the
+	// mapper device, not the ciphertext LV.
+	if lvr != nil && lvr.Spec.Encryption != nil && lvr.Spec.Encryption.Enabled {
+		if err := s.resizeEncryptedMapping(ctx, lvr); err != nil {
+			return nil, status.Errorf(codes.Internal, "encryption resize failed: %v", err)
+		}
+		lv.Path = crypt.MapperPath(dmName(volumeID))
 	}
 
 	args := []string{"-o", "source", "--noheadings", "--target", req.GetVolumePath()}

@@ -11,6 +11,20 @@ rules:
   - apiGroups: ["{{ include "topolvm.pluginName" . }}"]
     resources: ["logicalvolumes", "logicalvolumes/status"]
     verbs: ["get", "list", "watch", "create", "update", "delete", "patch"]
+  # The node SA reads EncryptionKey ciphertext to unwrap the DEK at mount.
+  # It must NOT be able to delete EncryptionKey objects: the protection
+  # finalizer on those keys is enforced by the controller, not the node.
+  - apiGroups: ["{{ include "topolvm.pluginName" . }}"]
+    resources: ["encryptionkeys"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: ["{{ include "topolvm.pluginName" . }}"]
+    resources: ["encryptionkeys/status"]
+    verbs: ["get", "update", "patch"]
+  # Required only for the master-key reencrypt worker; gated by the
+  # --encryption-enabled flag on topolvm-node.
+  - apiGroups: ["{{ include "topolvm.pluginName" . }}"]
+    resources: ["reencryptrequests", "reencryptrequests/status"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: ["storage.k8s.io"]
     resources: ["csidrivers"]
     verbs: ["get", "list", "watch"]

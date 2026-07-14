@@ -1,0 +1,183 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: reencryptrequests.topolvm.io
+spec:
+  group: topolvm.io
+  names:
+    kind: ReencryptRequest
+    listKind: ReencryptRequestList
+    plural: reencryptrequests
+    singular: reencryptrequest
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.total
+      name: Total
+      type: integer
+    - jsonPath: .status.completed
+      name: Completed
+      type: integer
+    - jsonPath: .status.failed
+      name: Failed
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: ReencryptRequest drives master-key rotation as an auditable,
+          throttled operation.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ReencryptRequestSpec selects volumes to reencrypt and constrains
+              the rollout.
+            properties:
+              maxConcurrentPerNode:
+                description: |-
+                  MaxConcurrentPerNode caps the number of simultaneous reencrypts on a single node.
+                  Zero defaults to 1 at the controller.
+                format: int32
+                type: integer
+              newCipher:
+                description: NewCipher requests a cipher upgrade (crypto-agility).
+                  Empty keeps the current cipher.
+                type: string
+              reason:
+                description: Reason is an operator-supplied audit string (annual-key-rotation,
+                  suspected-compromise...).
+                type: string
+              selector:
+                description: |-
+                  Selector picks the set of LogicalVolume objects to reencrypt. Nil selector
+                  is rejected to avoid accidental cluster-wide rotations.
+                properties:
+                  matchExpressions:
+                    description: matchExpressions is a list of label selector requirements.
+                      The requirements are ANDed.
+                    items:
+                      description: |-
+                        A label selector requirement is a selector that contains values, a key, and an operator that
+                        relates the key and values.
+                      properties:
+                        key:
+                          description: key is the label key that the selector applies
+                            to.
+                          type: string
+                        operator:
+                          description: |-
+                            operator represents a key's relationship to a set of values.
+                            Valid operators are In, NotIn, Exists and DoesNotExist.
+                          type: string
+                        values:
+                          description: |-
+                            values is an array of string values. If the operator is In or NotIn,
+                            the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                            the values array must be empty. This array is replaced during a strategic
+                            merge patch.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: atomic
+                      required:
+                      - key
+                      - operator
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                      map is equivalent to an element of matchExpressions, whose key field is "key", the
+                      operator is "In", and the values array contains only "value". The requirements are ANDed.
+                    type: object
+                type: object
+                x-kubernetes-map-type: atomic
+              throughputLimit:
+                description: |-
+                  ThroughputLimit caps cryptsetup's reencrypt throughput (for example "50MiB/s").
+                  Empty disables the throttle.
+                type: string
+            required:
+            - selector
+            type: object
+          status:
+            description: ReencryptRequestStatus reports the aggregate progress of
+              the rotation.
+            properties:
+              completed:
+                description: Completed counts volumes that finished successfully.
+                format: int32
+                type: integer
+              failed:
+                description: Failed counts volumes that failed permanently.
+                format: int32
+                type: integer
+              perVolume:
+                description: PerVolume reports per-volume progress.
+                items:
+                  description: ReencryptVolumeStatus reports per-volume progress within
+                    a ReencryptRequest.
+                  properties:
+                    completedAt:
+                      description: CompletedAt records when this volume's reencrypt
+                        finished.
+                      format: date-time
+                      type: string
+                    message:
+                      description: Message holds a short human-readable status.
+                      type: string
+                    phase:
+                      description: Phase mirrors the per-volume lifecycle.
+                      type: string
+                    startedAt:
+                      description: StartedAt records when this volume's reencrypt
+                        began.
+                      format: date-time
+                      type: string
+                    volumeID:
+                      description: VolumeID identifies the LogicalVolume.
+                      type: string
+                  required:
+                  - volumeID
+                  type: object
+                type: array
+              phase:
+                description: Phase is the overall lifecycle phase.
+                type: string
+              total:
+                description: Total is the count of volumes selected for reencryption.
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

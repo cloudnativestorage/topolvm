@@ -14,6 +14,7 @@ import (
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
 	clientwrapper "github.com/topolvm/topolvm/internal/client"
 	"github.com/topolvm/topolvm/internal/hook"
+	"github.com/topolvm/topolvm/internal/keyprovider"
 	"github.com/topolvm/topolvm/internal/runners"
 	"github.com/topolvm/topolvm/pkg/controller"
 	"github.com/topolvm/topolvm/pkg/driver"
@@ -125,6 +126,8 @@ func subMain() error {
 		return err
 	}
 
+	// We register the EncryptionKey reconciler later, once kp is built.
+
 	//+kubebuilder:scaffold:builder
 
 	// Add health checker to manager
@@ -144,7 +147,26 @@ func subMain() error {
 	// Add gRPC server to manager.
 	grpcServer := grpc.NewServer()
 	csi.RegisterIdentityServer(grpcServer, driver.NewIdentityServer(checker.Ready))
-	controllerSever, err := driver.NewControllerServer(mgr, config.controllerServerSettings)
+	var kp keyprovider.KeyProvider
+	if config.encryptionEnabled {
+		if config.keyProviderName == "" {
+			return fmt.Errorf("--key-provider is required when --encryption-enabled is true")
+		}
+		kp, err = keyprovider.New(config.keyProviderName, config.keyProviderConfig)
+		if err != nil {
+			return fmt.Errorf("initialize key provider %q: %w", config.keyProviderName, err)
+		}
+		setupLog.Info("encryption enabled", "provider", config.keyProviderName)
+		if err := controller.SetupEncryptionKeyReconciler(mgr, client, kp, 0); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "EncryptionKey")
+			return err
+		}
+		if err := controller.SetupReencryptRequestReconciler(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "ReencryptRequest")
+			return err
+		}
+	}
+	controllerSever, err := driver.NewControllerServerWithEncryption(mgr, config.controllerServerSettings, kp)
 	if err != nil {
 		return err
 	}
