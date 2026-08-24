@@ -48,13 +48,21 @@ func NewControllerServerWithEncryption(mgr manager.Manager, settings ControllerS
 		return nil, err
 	}
 
+	// encKeys stays nil when no key provider is configured, so a
+	// deployment that never enables TDE takes the byte-identical legacy
+	// path in DeleteVolume/DeleteSnapshot: no EncryptionKey lookups.
+	var encKeys *k8s.EncryptionKeyService
+	if keyProvider != nil {
+		encKeys = k8s.NewEncryptionKeyService(mgr)
+	}
+
 	return &controllerServer{
 		lockByName:     NewLockWithID(),
 		lockByVolumeID: NewLockWithID(),
 		server: &controllerServerNoLocked{
 			lvService:   lvService,
 			nodeService: k8s.NewNodeService(mgr.GetClient()),
-			encKeys:     k8s.NewEncryptionKeyService(mgr),
+			encKeys:     encKeys,
 			keyProvider: keyProvider,
 			settings:    settings,
 		},
