@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/status"
 	mountutil "k8s.io/mount-utils"
 	utilexec "k8s.io/utils/exec"
+	"k8s.io/utils/keymutex"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -49,7 +50,7 @@ func NewNodeServerWithEncryption(nodeName string, vgServiceClient proto.VGServic
 
 	var coord *encryptionCoordinator
 	if enc != nil && enc.CryptManager != nil && enc.KeyProvider != nil {
-		coord = newEncryptionCoordinator(enc.CryptManager, enc.KeyProvider, k8s.NewEncryptionKeyService(mgr), lvService)
+		coord = newEncryptionCoordinator(enc.CryptManager, enc.KeyProvider, k8s.NewEncryptionKeyService(mgr), lvService, enc.DeviceLocks)
 	}
 
 	return &nodeServer{
@@ -71,6 +72,13 @@ func NewNodeServerWithEncryption(nodeName string, vgServiceClient proto.VGServic
 type EncryptionDeps struct {
 	CryptManager crypt.Manager
 	KeyProvider  keyprovider.KeyProvider
+	// DeviceLocks, when set, must be the same instance passed to
+	// controller.SetupLVReencryptWorker so the node server's LUKS
+	// open/close/resize calls serialize against the reencrypt worker's
+	// long-running cryptsetup reencrypt for the same volume. Nil is safe
+	// (a private lock table is used) but only correct when no reencrypt
+	// worker runs in this process.
+	DeviceLocks keymutex.KeyMutex
 }
 
 // This is a wrapper for nodeServerNoLocked to protect concurrent method calls.
@@ -225,6 +233,8 @@ func (s *nodeServerNoLocked) ensureEncryptedOpen(ctx context.Context, lvr *topol
 	if s.encryption == nil || !s.encryption.enabled() {
 		return "", fmt.Errorf("encrypted volume %s requires encryption support but topolvm-node was not started with --encryption-enabled", lvr.Status.VolumeID)
 	}
+	unlock := s.encryption.lockDevice(lvr.Status.VolumeID)
+	defer unlock()
 	rk, err := s.encryption.unwrap(ctx, lvr)
 	if err != nil {
 		return "", err
@@ -429,6 +439,8 @@ func (s *nodeServerNoLocked) resizeEncryptedMapping(ctx context.Context, lvr *to
 	if s.encryption == nil || !s.encryption.enabled() {
 		return fmt.Errorf("encrypted volume %s requires encryption support but topolvm-node was not started with --encryption-enabled", lvr.Status.VolumeID)
 	}
+	unlock := s.encryption.lockDevice(lvr.Status.VolumeID)
+	defer unlock()
 	rk, err := s.encryption.unwrap(ctx, lvr)
 	if err != nil {
 		return err
@@ -455,6 +467,8 @@ func (s *nodeServerNoLocked) closeEncryptedIfAny(ctx context.Context, volumeID s
 	if err == nil && (lvr.Spec.Encryption == nil || !lvr.Spec.Encryption.Enabled) {
 		return nil
 	}
+	unlock := s.encryption.lockDevice(volumeID)
+	defer unlock()
 	return s.encryption.close(ctx, volumeID)
 }
 

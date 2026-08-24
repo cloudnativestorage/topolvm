@@ -11,6 +11,7 @@ import (
 	"github.com/topolvm/topolvm/internal/keyprovider"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/keymutex"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	crlog "sigs.k8s.io/controller-runtime/pkg/log"
@@ -25,6 +26,11 @@ type LVReencryptWorker struct {
 	keyProvider  keyprovider.KeyProvider
 	nodeName     string
 	devicePathFn func(volumeID string) string
+	// deviceLocks must be the same instance the node server uses to guard
+	// its LUKS open/close/resize calls, so a long-running cryptsetup
+	// reencrypt here can never race NodePublishVolume/NodeUnpublishVolume
+	// operating on the same device.
+	deviceLocks keymutex.KeyMutex
 
 	mu       sync.Mutex
 	inflight map[string]struct{}
@@ -33,10 +39,15 @@ type LVReencryptWorker struct {
 
 // NewLVReencryptWorker builds a worker bound to a specific node.
 // devicePathFn maps volumeID -> /dev/topolvm/<uuid> (callers wire this from
-// the existing node-side LV resolution).
-func NewLVReencryptWorker(c client.Client, cm crypt.Manager, kp keyprovider.KeyProvider, nodeName string, maxConc int, devicePathFn func(string) string) *LVReencryptWorker {
+// the existing node-side LV resolution). deviceLocks must be shared with the
+// node server's encryptionCoordinator in the same process; nil falls back to
+// a private lock table (safe, but no longer coordinates with the node server).
+func NewLVReencryptWorker(c client.Client, cm crypt.Manager, kp keyprovider.KeyProvider, nodeName string, maxConc int, devicePathFn func(string) string, deviceLocks keymutex.KeyMutex) *LVReencryptWorker {
 	if maxConc <= 0 {
 		maxConc = 1
+	}
+	if deviceLocks == nil {
+		deviceLocks = keymutex.NewHashed(0)
 	}
 	return &LVReencryptWorker{
 		client:       c,
@@ -44,6 +55,7 @@ func NewLVReencryptWorker(c client.Client, cm crypt.Manager, kp keyprovider.KeyP
 		keyProvider:  kp,
 		nodeName:     nodeName,
 		devicePathFn: devicePathFn,
+		deviceLocks:  deviceLocks,
 		inflight:     map[string]struct{}{},
 		maxConc:      maxConc,
 	}
@@ -117,7 +129,12 @@ func (w *LVReencryptWorker) runReencrypt(ctx context.Context, lv *topolvmv1.Logi
 	}
 	defer pass.Destroy()
 
-	if err := w.crypt.Reencrypt(ctx, dev, pass, crypt.ReencryptOpts{Resilience: "checksum"}); err != nil {
+	w.deviceLocks.LockKey(lv.Status.VolumeID)
+	err = func() error {
+		defer func() { _ = w.deviceLocks.UnlockKey(lv.Status.VolumeID) }()
+		return w.crypt.Reencrypt(ctx, dev, pass, crypt.ReencryptOpts{Resilience: "checksum"})
+	}()
+	if err != nil {
 		log.Error(err, "cryptsetup reencrypt", "lv", lv.Name)
 		_ = w.markError(ctx, lv.Name, err.Error())
 		return

@@ -13,6 +13,7 @@ import (
 	"github.com/topolvm/topolvm/internal/driver/internal/k8s"
 	"github.com/topolvm/topolvm/internal/keyprovider"
 	"k8s.io/client-go/util/retry"
+	"k8s.io/utils/keymutex"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -23,13 +24,32 @@ type encryptionCoordinator struct {
 	keyProvider keyprovider.KeyProvider
 	encKeys     *k8s.EncryptionKeyService
 	k8sLV       *k8s.LogicalVolumeService
+	// deviceLocks serializes device-level cryptsetup operations (open,
+	// close, resize) per volume ID against the LVReencryptWorker's
+	// long-running `cryptsetup reencrypt`, which runs in its own goroutine
+	// outside the nodeServer's global RPC lock. Shared with that worker by
+	// the caller that wires both up.
+	deviceLocks keymutex.KeyMutex
 }
 
 // newEncryptionCoordinator builds the coordinator from the wired dependencies.
 // When keyProvider or crypt is nil, the coordinator returns a sentinel that
-// rejects encrypted operations; callers should pre-check.
-func newEncryptionCoordinator(c crypt.Manager, kp keyprovider.KeyProvider, ek *k8s.EncryptionKeyService, lv *k8s.LogicalVolumeService) *encryptionCoordinator {
-	return &encryptionCoordinator{crypt: c, keyProvider: kp, encKeys: ek, k8sLV: lv}
+// rejects encrypted operations; callers should pre-check. dl must be shared
+// with the LVReencryptWorker instance running in the same process; a nil dl
+// falls back to a private lock table (safe, but no longer coordinates with
+// an out-of-process worker, which does not apply to this binary's wiring).
+func newEncryptionCoordinator(c crypt.Manager, kp keyprovider.KeyProvider, ek *k8s.EncryptionKeyService, lv *k8s.LogicalVolumeService, dl keymutex.KeyMutex) *encryptionCoordinator {
+	if dl == nil {
+		dl = keymutex.NewHashed(0)
+	}
+	return &encryptionCoordinator{crypt: c, keyProvider: kp, encKeys: ek, k8sLV: lv, deviceLocks: dl}
+}
+
+// lockDevice serializes cryptsetup operations against volumeID. Callers must
+// invoke the returned func to unlock.
+func (e *encryptionCoordinator) lockDevice(volumeID string) func() {
+	e.deviceLocks.LockKey(volumeID)
+	return func() { _ = e.deviceLocks.UnlockKey(volumeID) }
 }
 
 func (e *encryptionCoordinator) enabled() bool {

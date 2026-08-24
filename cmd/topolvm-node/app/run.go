@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/keymutex"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -161,9 +162,14 @@ func subMain(ctx context.Context) error {
 			return fmt.Errorf("initialize key provider %q: %w", config.keyProviderName, err)
 		}
 		cm := crypt.NewManager(config.cryptsetupPath)
+		// Shared with the LVReencryptWorker below so a long-running
+		// cryptsetup reencrypt for a volume can never race this node
+		// server's LUKS open/close/resize for the same volume.
+		deviceLocks := keymutex.NewHashed(0)
 		encDeps = &driver.EncryptionDeps{
 			CryptManager: cm,
 			KeyProvider:  kp,
+			DeviceLocks:  deviceLocks,
 		}
 		// Node-side worker that runs cryptsetup reencrypt when an LV
 		// transitions to state=Reencrypting. It resolves devicePath
@@ -171,7 +177,7 @@ func subMain(ctx context.Context) error {
 		// layout that lvmd produces.
 		if err := controller.SetupLVReencryptWorker(mgr, cm, kp, nodename, config.reencryptMaxConcurrentPerNode, func(volumeID string) string {
 			return topolvm.LegacyDeviceDirectory + "/" + volumeID
-		}); err != nil {
+		}, deviceLocks); err != nil {
 			setupLog.Error(err, "unable to create controller", "controller", "LVReencryptWorker")
 			return err
 		}
