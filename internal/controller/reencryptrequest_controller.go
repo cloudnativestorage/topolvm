@@ -8,6 +8,7 @@ import (
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -82,40 +83,82 @@ func (r *ReencryptRequestReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// Schedule per-volume reencrypt by setting state on each LV. Honor
 	// MaxConcurrentPerNode: count currently Running on each node and skip
 	// when at cap.
+	r.scheduleWork(ctx, log, rr, work)
+
+	if err := r.updateProgress(ctx, rr, sel); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Requeue while there is still work outstanding.
+	if rr.Status.Phase != topolvmv1.ReencryptPhaseCompleted && rr.Status.Phase != topolvmv1.ReencryptPhaseFailed {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+	return ctrl.Result{}, nil
+}
+
+// scheduleWork flips eligible LVs in work to state=Reencrypting, honoring
+// MaxConcurrentPerNode. It skips volumes already reencrypting, permanently
+// errored (needs operator intervention, see markError callers), or already
+// completed under this exact request.
+func (r *ReencryptRequestReconciler) scheduleWork(ctx context.Context, log interface {
+	Error(err error, msg string, kv ...any)
+}, rr *topolvmv1.ReencryptRequest, work []topolvmv1.LogicalVolume) {
 	cap := int(rr.Spec.MaxConcurrentPerNode)
 	if cap <= 0 {
 		cap = 1
 	}
 	running := perNodeRunningCount(work)
-	scheduled := 0
 	for _, lv := range work {
-		if lv.Status.Encryption != nil && lv.Status.Encryption.State == topolvmv1.EncryptionReencrypting {
+		if !schedulable(lv, rr.Name) || running[lv.Spec.NodeName] >= cap {
 			continue
 		}
-		if lv.Status.Encryption != nil && lv.Status.Encryption.MasterKeyEpoch > 0 && rr.Status.Phase == topolvmv1.ReencryptPhaseRunning {
-			// Already reencrypted under this request; tracked via status.completed below.
-			continue
-		}
-		if running[lv.Spec.NodeName] >= cap {
-			continue
-		}
-		if err := r.markReencrypting(ctx, lv.Name); err != nil {
+		if err := r.markReencrypting(ctx, lv.Name, rr.Name); err != nil {
 			log.Error(err, "mark LV reencrypting", "name", lv.Name)
 			continue
 		}
 		running[lv.Spec.NodeName]++
-		scheduled++
 	}
+}
 
-	// Update aggregate progress.
-	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+// schedulable reports whether lv is eligible to be (re)scheduled under requestName.
+func schedulable(lv topolvmv1.LogicalVolume, requestName string) bool {
+	es := lv.Status.Encryption
+	if es == nil {
+		return true
+	}
+	switch es.State {
+	case topolvmv1.EncryptionReencrypting, topolvmv1.EncryptionError:
+		return false
+	}
+	if es.ReencryptRequest == requestName && es.State == topolvmv1.EncryptionOpened {
+		// Already reencrypted under this exact request; tracked via status.completed.
+		return false
+	}
+	return true
+}
+
+// updateProgress re-lists the selected LVs and updates the ReencryptRequest's
+// aggregate status. It re-lists rather than reusing the pre-scheduling `work`
+// snapshot so Completed/Failed reflect state changes scheduleWork just made.
+func (r *ReencryptRequestReconciler) updateProgress(ctx context.Context, rr *topolvmv1.ReencryptRequest, sel labels.Selector) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		fresh := &topolvmv1.ReencryptRequest{}
 		if err := r.client.Get(ctx, client.ObjectKey{Name: rr.Name}, fresh); err != nil {
 			return err
 		}
-		fresh.Status.Total = int32(len(work))
-		fresh.Status.Completed = countCompleted(work)
-		fresh.Status.Failed = countFailed(work)
+		var freshLVs topolvmv1.LogicalVolumeList
+		if err := r.client.List(ctx, &freshLVs, &client.ListOptions{LabelSelector: sel}); err != nil {
+			return err
+		}
+		var freshWork []topolvmv1.LogicalVolume
+		for _, lv := range freshLVs.Items {
+			if lv.Spec.Encryption != nil && lv.Spec.Encryption.Enabled {
+				freshWork = append(freshWork, lv)
+			}
+		}
+		fresh.Status.Total = int32(len(freshWork))
+		fresh.Status.Completed = countCompleted(freshWork, rr.Name)
+		fresh.Status.Failed = countFailed(freshWork, rr.Name)
 		switch {
 		case fresh.Status.Total == 0:
 			fresh.Status.Phase = topolvmv1.ReencryptPhaseCompleted
@@ -127,18 +170,10 @@ func (r *ReencryptRequestReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			fresh.Status.Phase = topolvmv1.ReencryptPhaseRunning
 		}
 		return r.client.Status().Update(ctx, fresh)
-	}); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Requeue while there is still work outstanding.
-	if rr.Status.Phase != topolvmv1.ReencryptPhaseCompleted && rr.Status.Phase != topolvmv1.ReencryptPhaseFailed {
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
-	return ctrl.Result{}, nil
+	})
 }
 
-func (r *ReencryptRequestReconciler) markReencrypting(ctx context.Context, lvName string) error {
+func (r *ReencryptRequestReconciler) markReencrypting(ctx context.Context, lvName, requestName string) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		lv := &topolvmv1.LogicalVolume{}
 		if err := r.client.Get(ctx, client.ObjectKey{Name: lvName}, lv); err != nil {
@@ -148,6 +183,7 @@ func (r *ReencryptRequestReconciler) markReencrypting(ctx context.Context, lvNam
 			lv.Status.Encryption = &topolvmv1.EncryptionStatus{}
 		}
 		lv.Status.Encryption.State = topolvmv1.EncryptionReencrypting
+		lv.Status.Encryption.ReencryptRequest = requestName
 		return r.client.Status().Update(ctx, lv)
 	})
 }
@@ -162,20 +198,25 @@ func perNodeRunningCount(lvs []topolvmv1.LogicalVolume) map[string]int {
 	return out
 }
 
-func countCompleted(lvs []topolvmv1.LogicalVolume) int32 {
+// countCompleted counts volumes whose most recent reencrypt was driven by
+// requestName and finished successfully. Scoping by ReencryptRequest (rather
+// than the process-lifetime MasterKeyEpoch counter alone) keeps a volume
+// already rotated by an earlier request from being counted as done before
+// this request has actually reencrypted it.
+func countCompleted(lvs []topolvmv1.LogicalVolume, requestName string) int32 {
 	var n int32
 	for _, lv := range lvs {
-		if lv.Status.Encryption != nil && lv.Status.Encryption.MasterKeyEpoch > 0 && lv.Status.Encryption.State == topolvmv1.EncryptionOpened {
+		if lv.Status.Encryption != nil && lv.Status.Encryption.ReencryptRequest == requestName && lv.Status.Encryption.State == topolvmv1.EncryptionOpened {
 			n++
 		}
 	}
 	return n
 }
 
-func countFailed(lvs []topolvmv1.LogicalVolume) int32 {
+func countFailed(lvs []topolvmv1.LogicalVolume, requestName string) int32 {
 	var n int32
 	for _, lv := range lvs {
-		if lv.Status.Encryption != nil && lv.Status.Encryption.State == topolvmv1.EncryptionError {
+		if lv.Status.Encryption != nil && lv.Status.Encryption.ReencryptRequest == requestName && lv.Status.Encryption.State == topolvmv1.EncryptionError {
 			n++
 		}
 	}

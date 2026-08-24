@@ -212,6 +212,13 @@ spec:
                     description: MasterKeyEpoch is bumped only by a completed reencrypt.
                     format: int32
                     type: integer
+                  reencryptRequest:
+                    description: |-
+                      ReencryptRequest names the ReencryptRequest that most recently drove
+                      this volume into Reencrypting. Scopes State/MasterKeyEpoch progress
+                      to a specific request so an epoch bumped by an earlier request is
+                      never mistaken for completion of a later one targeting the same LV.
+                    type: string
                   state:
                     description: State is the current encryption lifecycle state.
                     type: string
@@ -321,4 +328,5 @@ spec:
     storage: true
     subresources:
       status: {}
+
 {{ end }}

@@ -95,6 +95,12 @@ type EncryptionStatus struct {
 	// MasterKeyEpoch is bumped only by a completed reencrypt.
 	// +optional
 	MasterKeyEpoch int32 `json:"masterKeyEpoch,omitempty"`
+	// ReencryptRequest names the ReencryptRequest that most recently drove
+	// this volume into Reencrypting. Scopes State/MasterKeyEpoch progress
+	// to a specific request so an epoch bumped by an earlier request is
+	// never mistaken for completion of a later one targeting the same LV.
+	// +optional
+	ReencryptRequest string `json:"reencryptRequest,omitempty"`
 }
 
 // LogicalVolumeStatus defines the observed state of LogicalVolume
