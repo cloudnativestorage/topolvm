@@ -23,13 +23,19 @@ type EncryptionKeyService struct {
 		client.StatusClient
 		client.Reader
 	}
+	// apiReader bypasses the manager's cache. Create's AlreadyExists path
+	// uses it: a racing CreateVolume retry that lost the create race must
+	// see the winner's just-written WrappedDEK, not a stale cached copy,
+	// or it will overwrite an already-in-use DEK.
+	apiReader client.Reader
 }
 
 // NewEncryptionKeyService returns an EncryptionKeyService bound to the
 // controller-runtime manager's cache + client.
 func NewEncryptionKeyService(mgr manager.Manager) *EncryptionKeyService {
 	c := clientwrapper.NewWrappedClient(mgr.GetClient())
-	return &EncryptionKeyService{writer: c}
+	apiReader := clientwrapper.NewWrappedReader(mgr.GetAPIReader(), mgr.GetClient().Scheme())
+	return &EncryptionKeyService{writer: c, apiReader: apiReader}
 }
 
 // Create creates a new EncryptionKey object with the wrapped DEK and
@@ -60,9 +66,12 @@ func (s *EncryptionKeyService) Create(ctx context.Context, name, provider, keyRe
 		// have created it. If its status was already populated, that DEK is
 		// the one wrapped into the on-disk LUKS header; returning it as-is
 		// keeps Create idempotent instead of overwriting it with a fresh DEK
-		// that has no matching keyslot.
+		// that has no matching keyslot. Read via apiReader (bypass the
+		// manager's cache): a racing writer's Status().Update may not have
+		// propagated to the cache yet, and acting on that stale emptiness
+		// here would overwrite the DEK the racing writer just committed.
 		existing := &topolvmv1.EncryptionKey{}
-		if err := s.writer.Get(ctx, client.ObjectKey{Name: name}, existing); err != nil {
+		if err := s.apiReader.Get(ctx, client.ObjectKey{Name: name}, existing); err != nil {
 			return nil, err
 		}
 		if existing.Status.WrappedDEK != "" {
@@ -73,7 +82,7 @@ func (s *EncryptionKeyService) Create(ctx context.Context, name, provider, keyRe
 	// Populate status separately. Status subresources require a second update.
 	return ek, retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		fresh := &topolvmv1.EncryptionKey{}
-		if err := s.writer.Get(ctx, client.ObjectKey{Name: name}, fresh); err != nil {
+		if err := s.apiReader.Get(ctx, client.ObjectKey{Name: name}, fresh); err != nil {
 			return err
 		}
 		if fresh.Status.WrappedDEK != "" {
