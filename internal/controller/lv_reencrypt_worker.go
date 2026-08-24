@@ -108,6 +108,14 @@ func (w *LVReencryptWorker) runReencrypt(ctx context.Context, lv *topolvmv1.Logi
 		w.mu.Lock()
 		delete(w.inflight, lv.Name)
 		w.mu.Unlock()
+		// This runs detached from the reconcile loop's panic handling
+		// (go w.runReencrypt(...)), so an unrecovered panic here would
+		// crash the whole topolvm-node process, taking down unrelated
+		// in-flight NodePublish/NodeUnpublish I/O with it.
+		if r := recover(); r != nil {
+			log.Error(fmt.Errorf("panic: %v", r), "reencrypt worker panicked", "lv", lv.Name)
+			_ = w.markError(ctx, lv.Name, fmt.Sprintf("internal error: %v", r))
+		}
 	}()
 
 	if lv.Spec.Encryption != nil && lv.Spec.Encryption.Integrity != "" {
