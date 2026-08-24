@@ -8,7 +8,6 @@ import (
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,8 +58,12 @@ func (r *ReencryptRequestReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("invalid selector: %w", err)
 	}
-	if sel == labels.Nothing() {
-		return ctrl.Result{}, fmt.Errorf("nil selector rejected to prevent cluster-wide rotation")
+	// A nil Selector and a present-but-empty `selector: {}` both convert to
+	// labels.Everything() (sel.Empty() == true), which would otherwise match
+	// every LogicalVolume in the cluster. Reject both explicitly; an operator
+	// must always name a concrete label selector to trigger reencryption.
+	if sel.Empty() {
+		return ctrl.Result{}, fmt.Errorf("empty selector rejected to prevent cluster-wide rotation")
 	}
 
 	var lvs topolvmv1.LogicalVolumeList

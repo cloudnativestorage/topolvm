@@ -390,6 +390,13 @@ func (s *nodeServerNoLocked) NodeUnpublishVolume(ctx context.Context, req *csi.N
 	if os.IsNotExist(err) {
 		// target_path does not exist, but legacy device for mount-type PV may still exist.
 		_ = os.Remove(filepath.Join(topolvm.LegacyDeviceDirectory, volumeID))
+		// The mount may already be gone while the dm-crypt mapping backing it
+		// is still open; close it here too, or the mapping leaks and a later
+		// DeleteVolume/lvremove can fail because the device is busy.
+		if err := s.closeEncryptedIfAny(ctx, volumeID); err != nil {
+			nodeLogger.Error(err, "failed to close encrypted mapping", "volume_id", volumeID)
+			return nil, status.Errorf(codes.Internal, "close encrypted mapping: %v", err)
+		}
 		return &csi.NodeUnpublishVolumeResponse{}, nil
 	} else if err != nil {
 		return nil, status.Errorf(codes.Internal, "stat failed for %s: %v", targetPath, err)

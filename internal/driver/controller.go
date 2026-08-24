@@ -15,6 +15,7 @@ import (
 	"github.com/topolvm/topolvm/internal/keyprovider"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -298,14 +299,31 @@ func (s controllerServerNoLocked) CreateVolume(ctx context.Context, req *csi.Cre
 	}
 
 	// For encrypted clones/restores, the new volume inherits the source's
-	// LUKS header (it is a block-level copy of ciphertext). The encryption
-	// spec comes from the source; per the design, we re-key on first stage.
-	if encSpec == nil && sourceVol != nil && sourceVol.Spec.Encryption != nil && sourceVol.Spec.Encryption.Enabled {
-		encSpec = sourceVol.Spec.Encryption.DeepCopy()
-	}
-
+	// LUKS header verbatim (it is a block-level copy of ciphertext), so it
+	// can only be unlocked with the exact same wrapped DEK as the source.
+	// Pin a copy of the source's EncryptionKey, the same way CreateSnapshot
+	// does for snapshots, rather than provisioning a fresh DEK: the copied
+	// header only has a keyslot for the source's passphrase, and there is
+	// no node-side step that adds a new one.
 	var activeKeyID string
-	if encSpec != nil && encSpec.Enabled {
+	switch {
+	case sourceVol != nil && sourceVol.Spec.Encryption != nil && sourceVol.Spec.Encryption.Enabled:
+		if s.encKeys == nil {
+			return nil, status.Error(codes.FailedPrecondition, "source volume is encrypted but topolvm-controller has no encryption services wired")
+		}
+		if sourceVol.Status.Encryption == nil || sourceVol.Status.Encryption.ActiveKeyID == "" {
+			return nil, status.Error(codes.FailedPrecondition, "source volume is encrypted but has no active EncryptionKey")
+		}
+		srcKey, err := s.encKeys.Get(ctx, sourceVol.Status.Encryption.ActiveKeyID)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "fetch source EncryptionKey: %v", err)
+		}
+		activeKeyID = EncryptionKeyObjectName(name)
+		if err := s.pinEncryptionKey(ctx, srcKey, activeKeyID, name); err != nil {
+			return nil, status.Errorf(codes.Internal, "pin EncryptionKey for clone: %v", err)
+		}
+		encSpec = sourceVol.Spec.Encryption.DeepCopy()
+	case encSpec != nil && encSpec.Enabled:
 		activeKeyID = EncryptionKeyObjectName(name)
 		if err := s.provisionEncryptionKey(ctx, name, encSpec, activeKeyID); err != nil {
 			ctrlLogger.Error(err, "failed to provision EncryptionKey", "name", name)
@@ -336,11 +354,13 @@ func (s controllerServerNoLocked) CreateVolume(ctx context.Context, req *csi.Cre
 	}, nil
 }
 
-// pinEncryptionKeyForSnapshot copies the origin's EncryptionKey (wrapped DEK +
-// keyslot + KEK version) into a new object owned by the snapshot. The snapshot
-// is appended to both keys' consumer lists so retention finalizers protect the
-// wrapped blob until every consumer is gone.
-func (s controllerServerNoLocked) pinEncryptionKeyForSnapshot(ctx context.Context, srcKey *v1.EncryptionKey, snapKeyName, snapshotID string) error {
+// pinEncryptionKey copies the origin's EncryptionKey (wrapped DEK + keyslot +
+// KEK version) into a new object owned by a block-level copy of the origin's
+// ciphertext LV (a snapshot or a clone). Both are byte-for-byte copies of the
+// origin's LUKS header, so they must be unlocked with the exact same wrapped
+// DEK. The copy is appended to both keys' consumer lists so retention
+// finalizers protect the wrapped blob until every consumer is gone.
+func (s controllerServerNoLocked) pinEncryptionKey(ctx context.Context, srcKey *v1.EncryptionKey, newKeyName, consumerID string) error {
 	if s.encKeys == nil {
 		return errors.New("encryption key service not wired")
 	}
@@ -348,12 +368,12 @@ func (s controllerServerNoLocked) pinEncryptionKeyForSnapshot(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("decode source wrappedDEK: %w", err)
 	}
-	if _, err := s.encKeys.Create(ctx, snapKeyName, srcKey.Spec.Provider, srcKey.Spec.KeyRef, srcKey.Status.BoundVolumeID, wrappedDEK, srcKey.Status.KEKVersion, srcKey.Status.Keyslot, []string{snapshotID}); err != nil {
+	if _, err := s.encKeys.Create(ctx, newKeyName, srcKey.Spec.Provider, srcKey.Spec.KeyRef, srcKey.Status.BoundVolumeID, wrappedDEK, srcKey.Status.KEKVersion, srcKey.Status.Keyslot, []string{consumerID}); err != nil {
 		return err
 	}
-	// Also append the snapshot to the source key consumers so a later
+	// Also append the copy to the source key consumers so a later
 	// rotation/deletion of the source still protects the pinned blob.
-	return s.encKeys.AddConsumer(ctx, srcKey.Name, snapshotID)
+	return s.encKeys.AddConsumer(ctx, srcKey.Name, consumerID)
 }
 
 // provisionEncryptionKey generates a fresh DEK, wraps it with the configured
@@ -467,7 +487,7 @@ func (s controllerServerNoLocked) CreateSnapshot(ctx context.Context, req *csi.C
 			return nil, status.Errorf(codes.Internal, "fetch source EncryptionKey: %v", err)
 		}
 		snapActiveKey = EncryptionKeyObjectName(name)
-		if err := s.pinEncryptionKeyForSnapshot(ctx, srcKey, snapActiveKey, name); err != nil {
+		if err := s.pinEncryptionKey(ctx, srcKey, snapActiveKey, name); err != nil {
 			return nil, status.Errorf(codes.Internal, "pin EncryptionKey for snapshot: %v", err)
 		}
 		snapEncSpec = sourceVol.Spec.Encryption.DeepCopy()
@@ -502,25 +522,20 @@ func (s controllerServerNoLocked) DeleteSnapshot(ctx context.Context, req *csi.D
 		return nil, status.Error(codes.InvalidArgument, "missing snapshot id")
 	}
 
-	// Detach the snapshot from the pinned EncryptionKey before deleting
-	// the underlying LV, so the key's consumer list can drain and the GC
-	// path can collect it once no other consumer remains.
+	// Look up the snapshot's pinned EncryptionKey before deleting the LV, but
+	// don't touch the key's consumer list until the LV delete has actually
+	// succeeded. Otherwise a transient DeleteVolume failure (lvmd RPC error,
+	// node unreachable) would leave the ciphertext LV alive with its sole
+	// wrapped DEK already garbage-collected.
+	var snapKeyID, snapSourceKeyID string
 	if s.encKeys != nil {
 		snap, err := s.lvService.GetVolume(ctx, req.GetSnapshotId())
 		if err == nil && snap.Status.Encryption != nil && snap.Status.Encryption.ActiveKeyID != "" {
-			snapID := req.GetSnapshotId()
-			if err := s.encKeys.RemoveConsumer(ctx, snap.Status.Encryption.ActiveKeyID, snapID); err != nil {
-				ctrlLogger.Error(err, "remove snapshot consumer", "key", snap.Status.Encryption.ActiveKeyID)
-			}
-			if err := s.encKeys.MaybeDelete(ctx, snap.Status.Encryption.ActiveKeyID); err != nil {
-				ctrlLogger.Error(err, "garbage-collect snapshot EncryptionKey", "key", snap.Status.Encryption.ActiveKeyID)
-			}
-			// Also drop the snapshot from the source key's consumer list
-			// if it was retained there for compounded protection.
+			snapKeyID = snap.Status.Encryption.ActiveKeyID
 			if snap.Spec.Source != "" {
 				if src, err := s.lvService.GetVolume(ctx, snap.Spec.Source); err == nil &&
 					src.Status.Encryption != nil && src.Status.Encryption.ActiveKeyID != "" {
-					_ = s.encKeys.RemoveConsumer(ctx, src.Status.Encryption.ActiveKeyID, snapID)
+					snapSourceKeyID = src.Status.Encryption.ActiveKeyID
 				}
 			}
 		}
@@ -533,6 +548,22 @@ func (s controllerServerNoLocked) DeleteSnapshot(ctx context.Context, req *csi.D
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 		return nil, err
+	}
+
+	// Now that the underlying LV is gone, detach the snapshot from the
+	// pinned EncryptionKey so the key's consumer list can drain and the GC
+	// path can collect it once no other consumer remains.
+	if snapKeyID != "" {
+		snapID := req.GetSnapshotId()
+		if err := s.encKeys.RemoveConsumer(ctx, snapKeyID, snapID); err != nil {
+			ctrlLogger.Error(err, "remove snapshot consumer", "key", snapKeyID)
+		}
+		if err := s.encKeys.MaybeDelete(ctx, snapKeyID); err != nil {
+			ctrlLogger.Error(err, "garbage-collect snapshot EncryptionKey", "key", snapKeyID)
+		}
+		if snapSourceKeyID != "" {
+			_ = s.encKeys.RemoveConsumer(ctx, snapSourceKeyID, snapID)
+		}
 	}
 
 	return &csi.DeleteSnapshotResponse{}, nil
@@ -604,20 +635,6 @@ func (s controllerServerNoLocked) DeleteVolume(ctx context.Context, req *csi.Del
 		return nil, status.Error(codes.InvalidArgument, "volume_id is not provided")
 	}
 
-	// Best-effort: drop the volume from the EncryptionKey's consumer list
-	// before deleting the LV. Snapshots that pin the same key remain protected.
-	if s.encKeys != nil {
-		lv, lvErr := s.lvService.GetVolume(ctx, req.GetVolumeId())
-		if lvErr == nil && lv.Status.Encryption != nil && lv.Status.Encryption.ActiveKeyID != "" {
-			if err := s.encKeys.RemoveConsumer(ctx, lv.Status.Encryption.ActiveKeyID, req.GetVolumeId()); err != nil {
-				ctrlLogger.Error(err, "failed to remove EncryptionKey consumer", "key", lv.Status.Encryption.ActiveKeyID, "volume", req.GetVolumeId())
-			}
-			if err := s.encKeys.MaybeDelete(ctx, lv.Status.Encryption.ActiveKeyID); err != nil {
-				ctrlLogger.Error(err, "failed to garbage-collect EncryptionKey", "key", lv.Status.Encryption.ActiveKeyID)
-			}
-		}
-	}
-
 	err := s.lvService.DeleteVolume(ctx, req.GetVolumeId())
 	if err != nil {
 		ctrlLogger.Error(err, "DeleteVolume failed", "volume_id", req.GetVolumeId())
@@ -626,6 +643,26 @@ func (s controllerServerNoLocked) DeleteVolume(ctx context.Context, req *csi.Del
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 		return nil, err
+	}
+
+	// Now that the LV is actually gone (DeleteVolume is idempotent and also
+	// returns nil if it never existed), drop the volume from its
+	// EncryptionKey's consumer list. The key name is derived deterministically
+	// from the volume ID, so this also reclaims a key that a CreateVolume call
+	// provisioned before failing to create the LogicalVolume itself. Snapshots
+	// that pin the same key remain protected by their own consumer entry.
+	if s.encKeys != nil {
+		keyName := EncryptionKeyObjectName(req.GetVolumeId())
+		if _, err := s.encKeys.Get(ctx, keyName); err == nil {
+			if err := s.encKeys.RemoveConsumer(ctx, keyName, req.GetVolumeId()); err != nil {
+				ctrlLogger.Error(err, "failed to remove EncryptionKey consumer", "key", keyName, "volume", req.GetVolumeId())
+			}
+			if err := s.encKeys.MaybeDelete(ctx, keyName); err != nil {
+				ctrlLogger.Error(err, "failed to garbage-collect EncryptionKey", "key", keyName)
+			}
+		} else if !apierrors.IsNotFound(err) {
+			ctrlLogger.Error(err, "failed to get EncryptionKey", "key", keyName, "volume", req.GetVolumeId())
+		}
 	}
 
 	return &csi.DeleteVolumeResponse{}, nil

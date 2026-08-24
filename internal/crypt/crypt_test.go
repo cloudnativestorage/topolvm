@@ -278,9 +278,12 @@ func TestResize_PassphraseViaStdin(t *testing.T) {
 
 func TestAddKey_ExtraFDAndDump(t *testing.T) {
 	r := &recordingRunner{}
-	// First call: luksAddKey - succeed.
+	// First call: luksDump before luksAddKey - only slot 0 occupied.
+	r.push(CmdResult{Stdout: []byte("Keyslots:\n  0: luks2\n")}, nil)
+	// Second call: luksAddKey - succeed.
 	r.push(CmdResult{}, nil)
-	// Second call: luksDump - return one occupied slot at index 1.
+	// Third call: luksDump after luksAddKey - cryptsetup filled the lowest
+	// free slot, not necessarily the highest-numbered one; slot 1 is new here.
 	r.push(CmdResult{Stdout: []byte("Keyslots:\n  0: luks2\n  1: luks2\n")}, nil)
 	m := NewManagerWithRunner("", r)
 	oldPass := mustSecret(t, "passphrase-1")
@@ -294,7 +297,7 @@ func TestAddKey_ExtraFDAndDump(t *testing.T) {
 	if slot != 1 {
 		t.Fatalf("slot = %d, want 1", slot)
 	}
-	addCall := r.calls[0]
+	addCall := r.calls[1]
 	want := []string{
 		"luksAddKey",
 		"--batch-mode",

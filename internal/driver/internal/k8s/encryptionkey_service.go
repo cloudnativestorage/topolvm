@@ -56,16 +56,28 @@ func (s *EncryptionKeyService) Create(ctx context.Context, name, provider, keyRe
 		if !apierrors.IsAlreadyExists(err) {
 			return nil, fmt.Errorf("encryptionkey: create %s: %w", name, err)
 		}
-		// retrieve so we can update status
-		if err := s.writer.Get(ctx, client.ObjectKey{Name: name}, ek); err != nil {
+		// Already exists: a prior attempt (e.g. a CSI CreateVolume retry) may
+		// have created it. If its status was already populated, that DEK is
+		// the one wrapped into the on-disk LUKS header; returning it as-is
+		// keeps Create idempotent instead of overwriting it with a fresh DEK
+		// that has no matching keyslot.
+		existing := &topolvmv1.EncryptionKey{}
+		if err := s.writer.Get(ctx, client.ObjectKey{Name: name}, existing); err != nil {
 			return nil, err
 		}
+		if existing.Status.WrappedDEK != "" {
+			return existing, nil
+		}
+		ek = existing
 	}
 	// Populate status separately. Status subresources require a second update.
 	return ek, retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		fresh := &topolvmv1.EncryptionKey{}
 		if err := s.writer.Get(ctx, client.ObjectKey{Name: name}, fresh); err != nil {
 			return err
+		}
+		if fresh.Status.WrappedDEK != "" {
+			return nil
 		}
 		fresh.Status.WrappedDEK = base64.StdEncoding.EncodeToString(wrappedDEK)
 		fresh.Status.KEKVersion = kekVersion

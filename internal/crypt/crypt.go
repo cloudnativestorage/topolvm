@@ -235,6 +235,11 @@ func (m *execManager) AddKey(ctx context.Context, device string, oldPass, newPas
 	if newPass == nil || newPass.Len() == 0 {
 		return -1, errors.New("crypt: empty new passphrase for luksAddKey")
 	}
+	before, err := m.occupiedSlots(ctx, device)
+	if err != nil {
+		return -1, fmt.Errorf("crypt: list keyslots before luksAddKey on %s: %w", device, err)
+	}
+
 	args := []string{
 		"luksAddKey",
 		"--batch-mode",
@@ -248,9 +253,23 @@ func (m *execManager) AddKey(ctx context.Context, device string, oldPass, newPas
 	if err != nil {
 		return -1, fmt.Errorf("crypt: luksAddKey %s: %w: %s", device, err, strings.TrimSpace(string(res.Stderr)))
 	}
-	slot, err := m.lookupNewestSlot(ctx, device)
+
+	after, err := m.occupiedSlots(ctx, device)
 	if err != nil {
-		return -1, fmt.Errorf("crypt: lookup new slot on %s: %w", device, err)
+		return -1, fmt.Errorf("crypt: list keyslots after luksAddKey on %s: %w", device, err)
+	}
+	// cryptsetup fills the lowest free slot, not necessarily the
+	// highest-numbered occupied one, so diff against the pre-call snapshot
+	// rather than guessing a position.
+	slot := -1
+	for idx := range after {
+		if !before[idx] {
+			slot = idx
+			break
+		}
+	}
+	if slot < 0 {
+		return -1, fmt.Errorf("crypt: luksAddKey on %s reported success but no new keyslot was found", device)
 	}
 	return slot, nil
 }
@@ -362,26 +381,21 @@ func (m *execManager) runWithSecret(ctx context.Context, args []string, pass Sec
 	return nil
 }
 
-// lookupNewestSlot returns the highest occupied LUKS2 keyslot index.
-func (m *execManager) lookupNewestSlot(ctx context.Context, device string) (int, error) {
+// occupiedSlots returns the set of populated LUKS2 keyslot indices.
+func (m *execManager) occupiedSlots(ctx context.Context, device string) (map[int]bool, error) {
 	res, err := m.runner.Run(ctx, m.binary, []string{"luksDump", device}, nil, nil)
 	if err != nil {
-		return -1, err
+		return nil, err
 	}
-	slot := -1
+	slots := map[int]bool{}
 	for _, line := range strings.Split(string(res.Stdout), "\n") {
 		line = strings.TrimSpace(line)
 		var idx int
 		if _, scanErr := fmt.Sscanf(line, "%d: luks2", &idx); scanErr == nil {
-			if idx > slot {
-				slot = idx
-			}
+			slots[idx] = true
 		}
 	}
-	if slot < 0 {
-		return -1, errors.New("crypt: no occupied keyslots reported by luksDump")
-	}
-	return slot, nil
+	return slots, nil
 }
 
 // defaultRunner shells out via os/exec. The extra-FD machinery is used by
@@ -398,6 +412,8 @@ func (defaultRunner) Run(ctx context.Context, name string, args []string, stdin,
 	cmd.Stderr = &stderr
 
 	var extraWriter *os.File
+	var extraReader *os.File
+	var copyDone chan struct{}
 	if extraFD != nil {
 		pr, pw, err := os.Pipe()
 		if err != nil {
@@ -405,24 +421,42 @@ func (defaultRunner) Run(ctx context.Context, name string, args []string, stdin,
 		}
 		cmd.ExtraFiles = []*os.File{pr}
 		extraWriter = pw
-		defer func() { _ = pr.Close() }()
+		extraReader = pr
+		copyDone = make(chan struct{})
 	}
 
 	if err := cmd.Start(); err != nil {
 		if extraWriter != nil {
 			_ = extraWriter.Close()
+			_ = extraReader.Close()
 		}
 		return CmdResult{Stderr: stderr.Bytes()}, err
 	}
 
+	if extraReader != nil {
+		// The child received its own duplicate of this fd via ExtraFiles;
+		// close our copy now so the pipe's read side fully closes once the
+		// child's copy does, even if the child exits without ever reading
+		// extraFD (e.g. it rejects stdin before touching /dev/fd/3).
+		// Otherwise the write below can block forever on a full pipe buffer.
+		_ = extraReader.Close()
+	}
+
 	if extraWriter != nil {
 		go func() {
+			defer close(copyDone)
 			defer func() { _ = extraWriter.Close() }()
 			_, _ = io.Copy(extraWriter, extraFD)
 		}()
 	}
 
 	waitErr := cmd.Wait()
+	if copyDone != nil {
+		// Wait for the writer goroutine before returning: the caller
+		// destroys/zeroizes the secret backing extraFD as soon as Run
+		// returns, and must not race with this goroutine's read of it.
+		<-copyDone
+	}
 	code := 0
 	if waitErr != nil {
 		var ee *exec.ExitError

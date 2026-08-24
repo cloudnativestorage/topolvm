@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
-	"path"
 	"strings"
 	"sync"
 	"time"
@@ -241,9 +241,18 @@ func extractVaultVersion(blob string) string {
 	return parts[1]
 }
 
+// urlf builds a Vault API URL from a format string, percent-encoding each
+// interpolated argument as a single path segment. This is required because
+// args (in particular the StorageClass-supplied KeyRef) are not trusted: a
+// value containing "/" or ".." must not be able to change which Vault API
+// path the request is sent to.
 func (v *VaultProvider) urlf(format string, args ...any) string {
-	rel := fmt.Sprintf(format, args...)
-	return strings.TrimRight(v.cfg.Address, "/") + path.Clean(rel)
+	escaped := make([]any, len(args))
+	for i, a := range args {
+		escaped[i] = url.PathEscape(fmt.Sprint(a))
+	}
+	rel := fmt.Sprintf(format, escaped...)
+	return strings.TrimRight(v.cfg.Address, "/") + rel
 }
 
 func (v *VaultProvider) do(ctx context.Context, method, url string, body any, out any) error {

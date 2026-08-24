@@ -159,9 +159,10 @@ func (p *AzureKVProvider) GenerateDEK(ctx context.Context, o KeyOpts) (crypt.Sec
 		return nil, WrappedKey{}, fmt.Errorf("keyprovider/azure-kv: WrapKey: %w", err)
 	}
 	blob := p.encode(o.VolumeID, dek.Bytes(), wrapped.Result)
-	version := p.keyVer
-	if version == "" {
-		version = "primary"
+	version, err := p.resolveVersion(ctx)
+	if err != nil {
+		dek.Destroy()
+		return nil, WrappedKey{}, err
 	}
 	return dek, WrappedKey{
 		Ciphertext: blob,
@@ -212,9 +213,9 @@ func (p *AzureKVProvider) Rewrap(ctx context.Context, w WrappedKey, volumeID str
 		return WrappedKey{}, fmt.Errorf("keyprovider/azure-kv: WrapKey(rewrap): %w", err)
 	}
 	blob := p.encode(volumeID, dek.Bytes(), resp.Result)
-	version := p.keyVer
-	if version == "" {
-		version = "primary"
+	version, err := p.resolveVersion(ctx)
+	if err != nil {
+		return WrappedKey{}, err
 	}
 	return WrappedKey{
 		Ciphertext: blob,
@@ -227,6 +228,17 @@ func (p *AzureKVProvider) Rewrap(ctx context.Context, w WrappedKey, volumeID str
 // KEKVersion returns the configured key version, refreshing from GetKey when
 // the configured KeyRef is unversioned.
 func (p *AzureKVProvider) KEKVersion(ctx context.Context, keyRef string) (string, error) {
+	return p.resolveVersion(ctx)
+}
+
+// resolveVersion returns the KEK version to record for a newly wrapped blob.
+// When the configured KeyRef is unversioned, this resolves the key's current
+// version from Key Vault, the same way KEKVersion does, so the value recorded
+// on a wrapped blob always matches what the next drift check compares it
+// against. Storing a fixed placeholder like "primary" here instead would
+// never match the real version KEKVersion resolves, causing the
+// EncryptionKey reconciler to see permanent drift and rewrap on every pass.
+func (p *AzureKVProvider) resolveVersion(ctx context.Context) (string, error) {
 	if p.keyVer != "" {
 		return p.keyVer, nil
 	}
