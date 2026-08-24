@@ -151,21 +151,30 @@ func (s *EncryptionKeyService) RemoveConsumer(ctx context.Context, name, id stri
 // finalizer; this method removes the finalizer once the consumer list is
 // empty and then issues a delete.
 func (s *EncryptionKeyService) MaybeDelete(ctx context.Context, name string) error {
-	ek := &topolvmv1.EncryptionKey{}
-	if err := s.writer.Get(ctx, client.ObjectKey{Name: name}, ek); err != nil {
-		if apierrors.IsNotFound(err) {
+	var out *topolvmv1.EncryptionKey
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		ek := &topolvmv1.EncryptionKey{}
+		if err := s.writer.Get(ctx, client.ObjectKey{Name: name}, ek); err != nil {
+			if apierrors.IsNotFound(err) {
+				out = nil
+				return nil
+			}
+			return err
+		}
+		if len(ek.Status.Consumers) > 0 {
+			out = nil
 			return nil
 		}
+		// strip our protection finalizer then delete
+		out = ek.DeepCopy()
+		out.Finalizers = removeString(out.Finalizers, "topolvm.io/encryptionkey-protection")
+		return s.writer.Update(ctx, out)
+	})
+	if err != nil {
 		return err
 	}
-	if len(ek.Status.Consumers) > 0 {
+	if out == nil {
 		return nil
-	}
-	// strip our protection finalizer then delete
-	out := ek.DeepCopy()
-	out.Finalizers = removeString(out.Finalizers, "topolvm.io/encryptionkey-protection")
-	if err := s.writer.Update(ctx, out); err != nil {
-		return err
 	}
 	if err := s.writer.Delete(ctx, out); err != nil && !apierrors.IsNotFound(err) {
 		return err
