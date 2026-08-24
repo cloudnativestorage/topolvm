@@ -445,9 +445,16 @@ func (s *nodeServerNoLocked) closeEncryptedIfAny(ctx context.Context, volumeID s
 	if s.encryption == nil || !s.encryption.enabled() {
 		return nil
 	}
-	// We don't strictly need the LV CR to call close; IsOpen + Close is
-	// keyed by dm-name only. Skip the lookup to keep unmount cheap and
-	// resilient when the LV CR is already gone.
+	// Gate on the LV's own spec, not just node-wide --encryption-enabled:
+	// on a node where some volumes are encrypted and others aren't, an
+	// unencrypted LV must never touch cryptsetup (byte-identical legacy
+	// path). If the LV CR is already gone, fall through to the best-effort
+	// close below; IsOpen/Close is keyed by dm-name only and a missing CR
+	// means we can't tell either way.
+	lvr, err := s.k8sLVService.GetVolume(ctx, volumeID)
+	if err == nil && (lvr.Spec.Encryption == nil || !lvr.Spec.Encryption.Enabled) {
+		return nil
+	}
 	return s.encryption.close(ctx, volumeID)
 }
 
