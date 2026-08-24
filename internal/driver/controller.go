@@ -323,6 +323,13 @@ func (s controllerServerNoLocked) CreateVolume(ctx context.Context, req *csi.Cre
 			return nil, status.Errorf(codes.Internal, "pin EncryptionKey for clone: %v", err)
 		}
 		encSpec = sourceVol.Spec.Encryption.DeepCopy()
+	case sourceVol != nil && encSpec != nil && encSpec.Enabled:
+		// The clone/restore is a block-level thin copy of the source's
+		// existing (unencrypted) data. There is no node-side step that
+		// re-encrypts data in place, so formatting a fresh LUKS header
+		// over it at first publish would destroy the copied data while
+		// reporting success. Reject the combination outright.
+		return nil, status.Error(codes.InvalidArgument, "cannot create an encrypted clone/restore from an unencrypted source volume")
 	case encSpec != nil && encSpec.Enabled:
 		activeKeyID = EncryptionKeyObjectName(name)
 		if err := s.provisionEncryptionKey(ctx, name, encSpec, activeKeyID); err != nil {
