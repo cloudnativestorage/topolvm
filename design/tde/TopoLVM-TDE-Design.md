@@ -123,6 +123,7 @@ type WrappedKey struct {
 - Controller-side provider calls (provisioning, rewrap) use the controller service account.
 - Node-side provider calls (unwrap at mount, reencrypt) use the node service account, scoped to only `Unwrap`/`Decrypt` plus, for re-encryption, `GenerateDEK`. Nodes should not hold KEK-rotation rights.
 - Encryption context / Vault key policy binds each wrapped blob to its `volumeID` so a blob cannot be replayed against another volume.
+- `KeyRef` comes from the StorageClass and is therefore attacker-influenced input from anyone who can create a StorageClass or a PVC against a permissive one. Providers that build a REST/RPC call path or resource name by interpolating `KeyRef` (Vault Transit's `transit/keys/<KeyRef>` and friends is the case in point) must treat it as untrusted and percent-encode it as a single path segment rather than concatenating it into a URL and cleaning up after the fact; a `KeyRef` containing `../` must not be able to redirect the request to a different API path under the provider's real credentials.
 
 ---
 
@@ -226,6 +227,8 @@ status:
   perVolume: [...]
 ```
 
+`selector` is required and must resolve to a non-empty label match (`metav1.LabelSelectorAsSelector`'s `Empty()` must be `false`): both an absent selector and a present-but-empty `selector: {}` resolve to "match every LogicalVolume in the cluster", and the reconciler rejects both rather than treating either as an accidental cluster-wide rotation trigger. An operator who genuinely wants to rotate every encrypted volume must say so with an explicit selector that matches everything they intend, not by omission.
+
 ---
 
 ## 6. Volume lifecycle (node flows)
@@ -261,7 +264,9 @@ Order matters: extend LV, then resize crypt, then grow fs. Shrink is not support
 
 ### 6.4 Delete
 
-**DeleteVolume**: lvmd removes the LV (ciphertext and header gone). The controller deletes the `EncryptionKey` **unless** a snapshot still pins it (finalizer + `consumers` list). Crypto-erase is effectively immediate once both the LV header and the wrapped DEK are gone, even if raw blocks linger.
+**DeleteVolume**: lvmd removes the LV first (ciphertext and header gone); only once that has actually succeeded does the controller drop the volume from its `EncryptionKey`'s `consumers` and delete the key **unless** a snapshot still pins it (finalizer + `consumers` list). This ordering matters: dropping the key first and deleting the LV second would let a transient lvmd failure (RPC error, node unreachable) strand a ciphertext LV whose sole wrapped DEK has already been garbage-collected, permanently losing the data on a volume that was never actually removed.
+
+The `EncryptionKey` to clean up is looked up by its deterministic name (`vk-<hash(volumeID)>`), not by reading it off the `LogicalVolume`. This also lets `DeleteVolume` reclaim a key that `CreateVolume` provisioned before failing to create the `LogicalVolume` itself: `lvService.DeleteVolume` is a no-op success for a volume ID that was never created, but the key it orphaned is still found and cleaned up by name. Crypto-erase is effectively immediate once both the LV header and the wrapped DEK are gone, even if raw blocks linger.
 
 ---
 
@@ -281,11 +286,13 @@ An LVM thin snapshot is a block-level copy-on-write of the ciphertext, so the sn
 - We **pin** the key: at `CreateSnapshot`, copy the origin's current `EncryptionKey` (wrapped DEK + keyslot) into a new `EncryptionKey` object owned by the snapshot, and add the snapshot to its `consumers`. The origin's `EncryptionKey` gets a finalizer so passphrase rotation or deletion cannot strand the snapshot.
 - This is why passphrase rotation (Section 8.2) and master-key reencrypt (Section 9) must record key epochs: a snapshot taken before a rotation needs its pinned (older) key, which the origin's live header may no longer accept.
 
-### 7.3 Restore / clone (CreateVolume from snapshot)
+### 7.3 Restore / clone (CreateVolume from a snapshot or an encrypted volume)
 
-1. lvmd creates a new thin LV from the snapshot (block copy) -> it carries the snapshot's header and master key.
-2. The restored volume initially uses the snapshot's pinned `EncryptionKey`.
-3. **Re-key on divergence (recommended):** immediately after restore, give the clone its own identity: `provider.GenerateDEK` -> `luksAddKey` (new keyslot) -> `luksKillSlot` (old) -> new `EncryptionKey`. Now the clone and origin/snapshot no longer share an unlockable passphrase, even though they briefly shared a master key. For full cryptographic separation (different master key), schedule a `ReencryptRequest` on the clone; document this as the high-assurance, higher-cost option.
+`CreateVolume` with a data source (`VolumeContentSource_Snapshot` or `VolumeContentSource_Volume`) is a block-level copy in both cases: lvmd creates a new thin LV from the source, and the copy carries the source's LUKS2 header and master key verbatim, exactly like the snapshot case in Section 7.2.
+
+**Implemented: pin, don't re-key.** The controller pins the source's `EncryptionKey` for the new volume the same way `CreateSnapshot` does (same `pinEncryptionKey` helper, same finalizer/consumer bookkeeping) instead of generating an independent DEK. This is deliberate, not just deferred convenience: the copied header only has a keyslot for the source's passphrase, and there is no node-side step that adds a new one, so a fresh DEK with no matching keyslot would leave the clone unable to open on first stage. An earlier revision of this feature generated a fresh DEK per clone without performing the corresponding `luksAddKey`/`luksKillSlot` re-key; that combination is a bug, not a variant of this design, and must not be reintroduced without also implementing the re-key step end to end.
+
+Automatic re-key on divergence (`provider.GenerateDEK` -> `luksAddKey` new slot -> `luksKillSlot` old slot -> new `EncryptionKey`, immediately after restore/clone) remains a reasonable future enhancement for giving every clone its own passphrase identity without waiting for a full master-key rotation, but it is **not implemented**. Until it is, a clone and its source (and any snapshots in between) share the same unlockable passphrase. Operators who need full cryptographic separation today should schedule a `ReencryptRequest` on the clone after it is created; this remains the documented high-assurance, higher-cost option (Section 9).
 
 ---
 

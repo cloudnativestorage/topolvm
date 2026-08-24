@@ -39,7 +39,7 @@ the provider.
 | Passphrase / keyslot rotation | node-side `RotateKeyslot` (luksAddKey + luksKillSlot) | none, online |
 | Master-key reencryption | `ReencryptRequest` -> per-LV state=Reencrypting -> `cryptsetup reencrypt --resilience checksum` | online, I/O-bound |
 
-## Snapshot / restore
+## Snapshot / restore / clone
 
 A thin snapshot inherits the origin's LUKS2 header (it is a block-level
 copy of ciphertext). The snapshot's `EncryptionKey` is a pinned copy of
@@ -47,6 +47,16 @@ the origin's at the moment of snapshot, so the snapshot is openable with
 the wrapped DEK that unlocked the origin at that point. Pre-rotation
 snapshots stay openable through their pinned key even after the origin
 rotates.
+
+Restoring a PVC from that snapshot, and cloning a PVC directly from
+another encrypted PVC, both go through the same block-level copy and the
+same key-pinning: the new volume's `EncryptionKey` is a pinned copy of
+the source's, not a freshly generated one. This means a clone shares its
+source's passphrase (and therefore its master key) until you explicitly
+give it its own identity. There is no automatic re-key step today; to
+fully separate a clone or restored volume from its source, schedule a
+`ReencryptRequest` against it after creation (see Master-key
+reencryption above).
 
 ## Threat model recap
 

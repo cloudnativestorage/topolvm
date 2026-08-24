@@ -435,6 +435,22 @@ create(lv)
 
 The controller persists only the wrapped DEK (in the `EncryptionKey` status). The node does the actual `luksFormat` on first stage (Section 7.2), which is where the on-disk header and keyslot get created.
 
+**CreateVolume with a data source (clone or restore).** `validateContentSource` resolves the source `LogicalVolume` (from either a `VolumeContentSource_Snapshot` or a `VolumeContentSource_Volume`) into `sourceVol` before this branch runs. When the source is encrypted, pin its key instead of taking the `scParams`-driven `GenerateDEK` path above, even if the StorageClass also requested encryption:
+
+```
+if sourceVol != nil && sourceVol.Spec.Encryption.Enabled {
+    srcKey := getEncryptionKey(sourceVol.Status.Encryption.ActiveKeyID)
+    activeKeyID := "vk-" + short(name)
+    pinEncryptionKey(srcKey, newKeyName=activeKeyID, consumerID=name)  // same helper as CreateSnapshot, Section 8.2
+    lv.Spec.Encryption = sourceVol.Spec.Encryption.DeepCopy()
+} else if scParams["topolvm.io/encryption"] == "true" {
+    // fresh DEK path, as above
+}
+lv.Status.Encryption = &EncryptionStatus{State: Pending, ActiveKeyID: activeKeyID}
+```
+
+Do not generate a fresh DEK for a clone/restore of an encrypted source. The new LV is a block-level copy of the source's ciphertext, so its LUKS2 header only has a keyslot for the source's passphrase; nothing on the node side adds a new one. A fresh, independent DEK here has no matching keyslot and the volume fails to open on first stage.
+
 ### 8.2 CreateSnapshot (online-snapshot path)
 
 Pin the key (Design Section 7.2):
@@ -456,7 +472,20 @@ In `internal/controller/logicalvolume_controller.go` (or wherever the fork issue
 
 ### 8.4 DeleteVolume / DeleteSnapshot
 
-On delete, remove the consumer from the `EncryptionKey`; delete the key only when `Consumers` is empty and it is not pinned by a snapshot (finalizer enforces this).
+Delete the underlying LV/snapshot first; only touch the `EncryptionKey` after `lvService.DeleteVolume` returns success:
+
+```
+if err := lvService.DeleteVolume(ctx, volumeID); err != nil {
+    return err   // EncryptionKey untouched; caller may retry
+}
+keyName := "vk-" + short(volumeID)   // deterministic; do not read ActiveKeyID off the LV
+if ek, err := encKeys.Get(ctx, keyName); err == nil {
+    encKeys.RemoveConsumer(ctx, keyName, volumeID)
+    encKeys.MaybeDelete(ctx, keyName)   // no-op if Consumers is still non-empty (pinned by a snapshot/clone)
+}
+```
+
+Deriving `keyName` from the volume ID instead of reading `lv.Status.Encryption.ActiveKeyID` matters for two reasons: it works even when the `LogicalVolume` no longer exists (delete is idempotent and returns success for an already-gone or never-created volume), and it reclaims a key that a failed `CreateVolume` provisioned before it ever created the LV, which would otherwise leak with no other cleanup path. Doing the LV delete first is equally load-bearing: dropping the key before the LV is confirmed gone risks stranding a ciphertext LV whose sole wrapped DEK has already been garbage-collected if the LV delete then fails.
 
 ---
 
