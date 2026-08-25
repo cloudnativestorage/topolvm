@@ -75,7 +75,7 @@ func (r *ReencryptRequestReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	// Filter to encrypted volumes only and tally.
 	var work []topolvmv1.LogicalVolume
 	for _, lv := range lvs.Items {
-		if lv.Spec.Encryption != nil && lv.Spec.Encryption.Enabled {
+		if lv.Spec.EncryptionEnabled() {
 			work = append(work, lv)
 		}
 	}
@@ -152,7 +152,7 @@ func (r *ReencryptRequestReconciler) updateProgress(ctx context.Context, rr *top
 		}
 		var freshWork []topolvmv1.LogicalVolume
 		for _, lv := range freshLVs.Items {
-			if lv.Spec.Encryption != nil && lv.Spec.Encryption.Enabled {
+			if lv.Spec.EncryptionEnabled() {
 				freshWork = append(freshWork, lv)
 			}
 		}

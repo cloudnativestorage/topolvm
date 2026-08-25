@@ -9,6 +9,7 @@ import (
 	topolvmv1 "github.com/topolvm/topolvm/api/v1"
 	"github.com/topolvm/topolvm/internal/crypt"
 	"github.com/topolvm/topolvm/internal/keyprovider"
+	"github.com/topolvm/topolvm/internal/lockutil"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/keymutex"
@@ -47,7 +48,7 @@ func NewLVReencryptWorker(c client.Client, cm crypt.Manager, kp keyprovider.KeyP
 		maxConc = 1
 	}
 	if deviceLocks == nil {
-		deviceLocks = keymutex.NewHashed(0)
+		deviceLocks = lockutil.New()
 	}
 	return &LVReencryptWorker{
 		client:       c,
@@ -77,7 +78,7 @@ func (w *LVReencryptWorker) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if lv.Spec.NodeName != w.nodeName {
 		return ctrl.Result{}, nil
 	}
-	if lv.Spec.Encryption == nil || !lv.Spec.Encryption.Enabled {
+	if !lv.Spec.EncryptionEnabled() {
 		return ctrl.Result{}, nil
 	}
 	if lv.Status.Encryption == nil || lv.Status.Encryption.State != topolvmv1.EncryptionReencrypting {
@@ -114,7 +115,18 @@ func (w *LVReencryptWorker) runReencrypt(ctx context.Context, lv *topolvmv1.Logi
 		// in-flight NodePublish/NodeUnpublish I/O with it.
 		if r := recover(); r != nil {
 			log.Error(fmt.Errorf("panic: %v", r), "reencrypt worker panicked", "lv", lv.Name)
-			_ = w.markError(ctx, lv.Name, fmt.Sprintf("internal error: %v", r))
+			// markError itself talks to the k8s API; a panic from inside it
+			// (e.g. a nil field, a marshalling panic) must not escape this
+			// recover, or it crashes the process anyway, defeating the
+			// point of recovering above.
+			func() {
+				defer func() {
+					if r2 := recover(); r2 != nil {
+						log.Error(fmt.Errorf("panic: %v", r2), "panic while recording reencrypt panic", "lv", lv.Name)
+					}
+				}()
+				_ = w.markError(ctx, lv.Name, fmt.Sprintf("internal error: %v", r))
+			}()
 		}
 	}()
 
@@ -137,11 +149,7 @@ func (w *LVReencryptWorker) runReencrypt(ctx context.Context, lv *topolvmv1.Logi
 	}
 	defer pass.Destroy()
 
-	w.deviceLocks.LockKey(lv.Status.VolumeID)
-	err = func() error {
-		defer func() { _ = w.deviceLocks.UnlockKey(lv.Status.VolumeID) }()
-		return w.crypt.Reencrypt(ctx, dev, pass, crypt.ReencryptOpts{Resilience: "checksum"})
-	}()
+	err = w.reencryptLocked(ctx, lv.Status.VolumeID, dev, pass)
 	if err != nil {
 		log.Error(err, "cryptsetup reencrypt", "lv", lv.Name)
 		_ = w.markError(ctx, lv.Name, err.Error())
@@ -151,6 +159,16 @@ func (w *LVReencryptWorker) runReencrypt(ctx context.Context, lv *topolvmv1.Logi
 	if err := w.markDone(ctx, lv.Name); err != nil {
 		log.Error(err, "persist reencrypt completion", "lv", lv.Name)
 	}
+}
+
+// reencryptLocked runs cryptsetup reencrypt while holding deviceLocks for
+// volumeID, releasing it as soon as the call returns (success or panic) so
+// the lock isn't held for the unrelated status-update work that follows in
+// runReencrypt.
+func (w *LVReencryptWorker) reencryptLocked(ctx context.Context, volumeID, dev string, pass crypt.SecretBuf) error {
+	w.deviceLocks.LockKey(volumeID)
+	defer func() { _ = w.deviceLocks.UnlockKey(volumeID) }()
+	return w.crypt.Reencrypt(ctx, dev, pass, crypt.ReencryptOpts{Resilience: "checksum"})
 }
 
 func (w *LVReencryptWorker) unwrap(ctx context.Context, lv *topolvmv1.LogicalVolume) (crypt.SecretBuf, error) {

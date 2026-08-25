@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/container-storage-interface/spec/lib/go/csi"
 	"github.com/topolvm/topolvm"
@@ -54,6 +53,7 @@ func NewNodeServerWithEncryption(nodeName string, vgServiceClient proto.VGServic
 	}
 
 	return &nodeServer{
+		volumeLocks: NewLockWithID(),
 		server: &nodeServerNoLocked{
 			nodeName:     nodeName,
 			client:       vgServiceClient,
@@ -85,37 +85,43 @@ type EncryptionDeps struct {
 type nodeServer struct {
 	csi.UnimplementedNodeServer
 
-	// This protects concurrent nodeServerNoLocked method calls.
-	// We use a global lock because it assumes that each method does not take a long time,
-	// and we scare about wired behaviors from concurrent device or filesystem operations.
-	mu     sync.Mutex
-	server *nodeServerNoLocked
+	// volumeLocks serializes nodeServerNoLocked method calls per volume ID.
+	// A single global lock would assume each method call is short-lived, but
+	// an encrypted volume's Publish/Unpublish/ExpandVolume can block for a
+	// long time waiting on the encryption coordinator's per-volume device
+	// lock while a reencrypt is in progress (internal/controller's
+	// LVReencryptWorker holds that lock for the full duration of `cryptsetup
+	// reencrypt`, potentially minutes to hours). Locking per volume ID keeps
+	// operations on unrelated volumes from queuing up behind that wait,
+	// while operations on the same volume remain serialized as before.
+	volumeLocks *LockByID
+	server      *nodeServerNoLocked
 }
 
 func (s *nodeServer) NodePublishVolume(ctx context.Context, req *csi.NodePublishVolumeRequest) (*csi.NodePublishVolumeResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.volumeLocks.LockByID(req.GetVolumeId())
+	defer s.volumeLocks.UnlockByID(req.GetVolumeId())
 
 	return s.server.NodePublishVolume(ctx, req)
 }
 
 func (s *nodeServer) NodeUnpublishVolume(ctx context.Context, req *csi.NodeUnpublishVolumeRequest) (*csi.NodeUnpublishVolumeResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.volumeLocks.LockByID(req.GetVolumeId())
+	defer s.volumeLocks.UnlockByID(req.GetVolumeId())
 
 	return s.server.NodeUnpublishVolume(ctx, req)
 }
 
 func (s *nodeServer) NodeGetVolumeStats(ctx context.Context, req *csi.NodeGetVolumeStatsRequest) (*csi.NodeGetVolumeStatsResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.volumeLocks.LockByID(req.GetVolumeId())
+	defer s.volumeLocks.UnlockByID(req.GetVolumeId())
 
 	return s.server.NodeGetVolumeStats(ctx, req)
 }
 
 func (s *nodeServer) NodeExpandVolume(ctx context.Context, req *csi.NodeExpandVolumeRequest) (*csi.NodeExpandVolumeResponse, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.volumeLocks.LockByID(req.GetVolumeId())
+	defer s.volumeLocks.UnlockByID(req.GetVolumeId())
 
 	return s.server.NodeExpandVolume(ctx, req)
 }
@@ -227,7 +233,7 @@ func (s *nodeServerNoLocked) NodePublishVolume(ctx context.Context, req *csi.Nod
 // Returns the mapper device path when encryption is active; empty string when
 // the LV is unencrypted (the legacy path is byte-identical in that case).
 func (s *nodeServerNoLocked) ensureEncryptedOpen(ctx context.Context, lvr *topolvmv1.LogicalVolume, devicePath string) (string, error) {
-	if lvr.Spec.Encryption == nil || !lvr.Spec.Encryption.Enabled {
+	if !lvr.Spec.EncryptionEnabled() {
 		return "", nil
 	}
 	if s.encryption == nil || !s.encryption.enabled() {
@@ -462,10 +468,18 @@ func (s *nodeServerNoLocked) closeEncryptedIfAny(ctx context.Context, volumeID s
 	// unencrypted LV must never touch cryptsetup (byte-identical legacy
 	// path). If the LV CR is already gone, fall through to the best-effort
 	// close below; IsOpen/Close is keyed by dm-name only and a missing CR
-	// means we can't tell either way.
+	// means we can't tell either way. Any other lookup error (e.g. a
+	// transient API-server timeout) must not be treated the same as "CR
+	// gone": we genuinely don't know the LV's encryption state, so surface
+	// the error and let the CO retry rather than guessing and possibly
+	// running cryptsetup against a volume that was never encrypted.
 	lvr, err := s.k8sLVService.GetVolume(ctx, volumeID)
-	if err == nil && (lvr.Spec.Encryption == nil || !lvr.Spec.Encryption.Enabled) {
-		return nil
+	if err == nil {
+		if !lvr.Spec.EncryptionEnabled() {
+			return nil
+		}
+	} else if !errors.Is(err, k8s.ErrVolumeNotFound) {
+		return err
 	}
 	unlock := s.encryption.lockDevice(volumeID)
 	defer unlock()
@@ -632,7 +646,7 @@ func (s *nodeServerNoLocked) NodeExpandVolume(ctx context.Context, req *csi.Node
 	// For encrypted volumes, grow the dm-crypt mapping before the
 	// filesystem; the resize2fs/xfs_growfs that follows targets the
 	// mapper device, not the ciphertext LV.
-	if lvr != nil && lvr.Spec.Encryption != nil && lvr.Spec.Encryption.Enabled {
+	if lvr != nil && lvr.Spec.EncryptionEnabled() {
 		if err := s.resizeEncryptedMapping(ctx, lvr); err != nil {
 			return nil, status.Errorf(codes.Internal, "encryption resize failed: %v", err)
 		}

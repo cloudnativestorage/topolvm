@@ -37,6 +37,13 @@ type LogicalVolumeSpec struct {
 	Encryption *EncryptionSpec `json:"encryption,omitempty"`
 }
 
+// EncryptionEnabled reports whether this volume requests transparent data
+// encryption. Nil Encryption or Enabled=false both mean the legacy
+// unencrypted code path must be used.
+func (s LogicalVolumeSpec) EncryptionEnabled() bool {
+	return s.Encryption != nil && s.Encryption.Enabled
+}
+
 // EncryptionSpec is set by the controller at provisioning time.
 type EncryptionSpec struct {
 	// Enabled gates encryption for this volume. Absence is equivalent to Enabled=false.

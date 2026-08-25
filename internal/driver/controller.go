@@ -315,7 +315,7 @@ func (s controllerServerNoLocked) CreateVolume(ctx context.Context, req *csi.Cre
 	// no node-side step that adds a new one.
 	var activeKeyID string
 	switch {
-	case sourceVol != nil && sourceVol.Spec.Encryption != nil && sourceVol.Spec.Encryption.Enabled:
+	case sourceVol != nil && sourceVol.Spec.EncryptionEnabled():
 		if s.encKeys == nil {
 			return nil, status.Error(codes.FailedPrecondition, "source volume is encrypted but topolvm-controller has no encryption services wired")
 		}
@@ -490,7 +490,7 @@ func (s controllerServerNoLocked) CreateSnapshot(ctx context.Context, req *csi.C
 	// be openable with the same wrapped DEK at restore time.
 	var snapEncSpec *v1.EncryptionSpec
 	var snapActiveKey string
-	if sourceVol.Spec.Encryption != nil && sourceVol.Spec.Encryption.Enabled {
+	if sourceVol.Spec.EncryptionEnabled() {
 		if s.encKeys == nil {
 			return nil, status.Error(codes.FailedPrecondition, "source volume is encrypted but topolvm-controller has no encryption services wired")
 		}

@@ -18,6 +18,7 @@ import (
 	clientwrapper "github.com/topolvm/topolvm/internal/client"
 	"github.com/topolvm/topolvm/internal/crypt"
 	"github.com/topolvm/topolvm/internal/keyprovider"
+	"github.com/topolvm/topolvm/internal/lockutil"
 	"github.com/topolvm/topolvm/internal/runners"
 	"github.com/topolvm/topolvm/pkg/controller"
 	"github.com/topolvm/topolvm/pkg/driver"
@@ -31,7 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/utils/keymutex"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -164,8 +164,11 @@ func subMain(ctx context.Context) error {
 		cm := crypt.NewManager(config.cryptsetupPath)
 		// Shared with the LVReencryptWorker below so a long-running
 		// cryptsetup reencrypt for a volume can never race this node
-		// server's LUKS open/close/resize for the same volume.
-		deviceLocks := keymutex.NewHashed(0)
+		// server's LUKS open/close/resize for the same volume. An exact
+		// per-key mutex is required here, not a hashed one: a hashed table
+		// can map two unrelated volume IDs onto the same bucket and block
+		// one on the other.
+		deviceLocks := lockutil.New()
 		encDeps = &driver.EncryptionDeps{
 			CryptManager: cm,
 			KeyProvider:  kp,

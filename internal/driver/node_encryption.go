@@ -12,6 +12,7 @@ import (
 	"github.com/topolvm/topolvm/internal/crypt"
 	"github.com/topolvm/topolvm/internal/driver/internal/k8s"
 	"github.com/topolvm/topolvm/internal/keyprovider"
+	"github.com/topolvm/topolvm/internal/lockutil"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/keymutex"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -40,7 +41,7 @@ type encryptionCoordinator struct {
 // an out-of-process worker, which does not apply to this binary's wiring).
 func newEncryptionCoordinator(c crypt.Manager, kp keyprovider.KeyProvider, ek *k8s.EncryptionKeyService, lv *k8s.LogicalVolumeService, dl keymutex.KeyMutex) *encryptionCoordinator {
 	if dl == nil {
-		dl = keymutex.NewHashed(0)
+		dl = lockutil.New()
 	}
 	return &encryptionCoordinator{crypt: c, keyProvider: kp, encKeys: ek, k8sLV: lv, deviceLocks: dl}
 }
@@ -189,10 +190,27 @@ func (e *encryptionCoordinator) openOrFormat(ctx context.Context, lv *topolvmv1.
 // persists a new EncryptionKey CR, retires the previous slot, and finally
 // kills the old one. Pre-rotation snapshots remain readable through their
 // own pinned EncryptionKey copies.
+//
+// Not wired into any node RPC path yet. Its Create/RemoveConsumer/MaybeDelete
+// calls need create/update/delete on encryptionkeys (plus the status
+// subresource), which the node ServiceAccount deliberately does not have:
+// AGENTS.md and charts/topolvm/templates/node/clusterrole.yaml restrict nodes
+// to get/list/watch on EncryptionKey, with create/update/delete/the
+// protection finalizer owned by the controller. Before calling this from a
+// node RPC, either route the key create/retire steps through the controller
+// (the way ReencryptRequest drives master-key reencrypt) or revisit that RBAC
+// policy deliberately, don't just widen it to unblock this method.
 func (e *encryptionCoordinator) RotateKeyslot(ctx context.Context, lv *topolvmv1.LogicalVolume, devicePath string) error {
 	if !e.enabled() {
 		return errors.New("encryption coordinator not configured")
 	}
+	// Serialize against LVReencryptWorker's long-running cryptsetup
+	// reencrypt and against this node's own open/close/resize paths for the
+	// same volume: interleaving keyslot mutations with those would corrupt
+	// the LUKS header.
+	unlock := e.lockDevice(lv.Status.VolumeID)
+	defer unlock()
+
 	old, err := e.unwrap(ctx, lv)
 	if err != nil {
 		return err
